@@ -1,0 +1,33 @@
+{
+  "name": "spice",
+  "version": "1.0.0",
+  "description": "Agent toolkit for LLM-assisted development projects",
+  "python_requires": ">=3.10",
+  "components": {
+    "roles": [
+      { "name": "analyst",     "version": "1.0.0", "tier": "heavy",    "suggested": false },
+      { "name": "architect",   "version": "1.0.0", "tier": "heavy",    "suggested": false },
+      { "name": "implementer", "version": "1.0.0", "tier": "standard", "suggested": true  },
+      { "name": "qa",          "version": "1.0.0", "tier": "standard", "suggested": true  },
+      { "name": "release",     "version": "1.0.0", "tier": "light",    "suggested": true  },
+      { "name": "security",    "version": "1.0.0", "tier": "standard", "suggested": false },
+      { "name": "documenter",  "version": "1.0.0", "tier": "light",    "suggested": false },
+      { "name": "refactor",    "version": "1.0.0", "tier": "standard", "suggested": false },
+      { "name": "reporter",    "version": "1.0.0", "tier": "light",    "suggested": false }
+    ],
+    "playbooks": [
+      { "name": "git",         "version": "1.0.0", "suggested": true  }
+    ],
+    "standards": [
+      { "name": "done",          "version": "1.0.0", "suggested": true  },
+      { "name": "handoff",       "version": "1.0.0", "suggested": true  },
+      { "name": "hitl",          "version": "1.0.0", "suggested": true  },
+      { "name": "orchestration", "version": "1.0.0", "suggested": true  },
+      { "name": "workflow",      "version": "1.0.0", "suggested": true  }
+    ],
+    "skills": [
+      { "name": "token-counter",   "version": "1.0.0", "suggested": false },
+      { "name": "csharp-rest-api", "version": "1.0.0", "suggested": false }
+    ]
+  }
+}
