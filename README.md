@@ -205,6 +205,20 @@ control.
 
 ---
 
+## What the agent is told it can enforce
+
+`RULES.md` carries a generated block naming the active profile, what actually
+enforces it, and the commands that change it. Regenerated whenever the profile,
+the targeted tools or the installed adapters change.
+
+It exists because of a specific failure: a user states a rule, the agent writes
+it down, and nothing enforces it — because the agent had no way to know the
+toolkit could. The block tells it to check first and offer the command instead
+of only recording the rule. It also names what no profile can enforce, so those
+stay visibly the agent's own responsibility.
+
+---
+
 ## Roles, phases and generated workflows
 
 Roles declare a `phase`. The workflow list in `RULES.md` is generated from the

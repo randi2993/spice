@@ -105,6 +105,16 @@ You are an LLM agent working on this project under a system of declared roles, s
 
 ---
 
+## What this project can enforce
+
+<!-- SPICE:CAPABILITIES:START -->
+<!-- managed by spice. do not edit manually. -->
+<!-- SPICE:CAPABILITIES:END -->
+
+Full detail in `.agent/standards/perimeter.md` when one is installed.
+
+---
+
 ## Role selection (for direct requests, not workflows)
 
 Some requests do NOT trigger a full workflow — they are direct queries answered by a single role. Examples:

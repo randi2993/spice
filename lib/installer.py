@@ -111,6 +111,9 @@ def cmd_init(args):
             print("\n[spice] Minimal profile installed.")
         else:
             print("[spice] Profile skipped. Use 'spice add <component>' when ready.")
+        # Last, so it reflects the finished installation: which adapters ended
+        # up present decides whether anything actually enforces the profile.
+        _regenerate_capabilities()
     except BaseException:
         _rollback_init(created_files)
         raise
@@ -278,6 +281,20 @@ def _regenerate_workflows() -> None:
     re_mod.set_block(rules_path, re_mod.WORKFLOWS_MARKER, body)
 
 
+def _regenerate_capabilities() -> None:
+    """Rewrites the block telling the agent what the toolkit can enforce."""
+    if not (AGENT_DIR / "RULES.md").exists():
+        return
+    catalog = prof.known_tools()
+    installed = set(_installed_adapters())
+    unenforced = [catalog[t]["name"] for t in prof.selected_tools(AGENT_DIR)
+                  if t in catalog and catalog[t].get("adapter") not in installed]
+    body = re_mod.render_capabilities(prof.load_or_default(AGENT_DIR),
+                                      prof.available(),
+                                      sorted(installed), unenforced)
+    re_mod.set_block(AGENT_DIR / "RULES.md", re_mod.CAPABILITIES_MARKER, body)
+
+
 def _reinject_roster(manifest: dict) -> int:
     """Rebuilds the SPICE:ROLES / SPICE:SKILLS blocks from the manifest."""
     rules_path = AGENT_DIR / "RULES.md"
@@ -302,6 +319,7 @@ def _reinject_roster(manifest: dict) -> int:
                 re_mod.inject_skill(rules_path, name, entry["version"], directive)
                 count += 1
     _regenerate_workflows()
+    _regenerate_capabilities()
     return count
 
 
@@ -430,6 +448,7 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
     elif ctype == "adapters":
         _install_adapter_hooks(name)
         applied = _render_adapter(name)
+        _regenerate_capabilities()
         if applied and not quiet:
             print(f"    -> rendered {applied}")
 
@@ -516,6 +535,7 @@ def cmd_profile(args):
         if previous:
             profile["exceptions"] = previous.get("exceptions", [])
         prof.save(AGENT_DIR, profile)
+        _regenerate_capabilities()
         print(f"[spice] Profile set to '{args.name}'.")
         rendered = _render_all_adapters()
         if rendered:
@@ -610,6 +630,7 @@ def cmd_tools(args):
         profile["tools"] = selected + [args.name]
         prof.save(AGENT_DIR, profile)
         _create_root_entrypoints([args.name])
+        _regenerate_capabilities()
         adapter = spec.get("adapter")
         if adapter and (TOOLKIT_ROOT / "adapters" / adapter).exists():
             if adapter in _installed_adapters():
@@ -635,6 +656,7 @@ def cmd_tools(args):
                 print(f"[spice] Deleted {entry}.")
         profile["tools"] = [t for t in selected if t != args.name]
         prof.save(AGENT_DIR, profile)
+        _regenerate_capabilities()
         adapter = spec.get("adapter")
         if adapter and adapter in _installed_adapters():
             print(f"        Its adapter is still installed. Remove it with "
@@ -1249,9 +1271,11 @@ def cmd_doctor(args):
 
     if rules_path.exists():
         content = rules_path.read_text(encoding="utf-8", errors="replace")
-        if "SPICE:WORKFLOWS:START" not in content:
-            warnings.append("RULES.md predates generated workflows — run "
-                            "'spice update --refresh-core'")
+        for marker, what in (("SPICE:WORKFLOWS:START", "generated workflows"),
+                             ("SPICE:CAPABILITIES:START", "the capabilities block")):
+            if marker not in content:
+                warnings.append(f"RULES.md predates {what} — run "
+                                f"'spice update --refresh-core'")
 
     # 9. Perimeter. A guard that is declared but not actually wired is worse
     #    than none: it produces confidence without protection.
