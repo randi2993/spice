@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from installer import (
     cmd_init, cmd_add, cmd_remove, cmd_list, cmd_update, cmd_doctor,
     cmd_onboard, cmd_run_agent, cmd_providers, cmd_search, cmd_path,
-    cmd_factory_reset, cmd_profile, cmd_suggest
+    cmd_factory_reset, cmd_profile, cmd_suggest, cmd_self_update
 )
 
 MIN_PYTHON = (3, 10)
@@ -96,14 +96,17 @@ def build_parser():
                            help="Install every match without asking")
 
     # update
-    p_update = _cmd(sub, "update", "Sync with latest toolkit version")
+    p_update = _cmd(sub, "update", "Reconcile this project with the installed toolkit")
     p_update.add_argument("--check", action="store_true", help="Show diff only, don't apply")
     p_update.add_argument("--allow-downgrade", action="store_true",
                           help="Apply components whose toolkit version is older than installed")
     p_update.add_argument("--refresh-core", action="store_true",
                           help="Also refresh core templates (keeps memory/ and project/)")
-    p_update.add_argument("--no-pull", action="store_true",
-                          help="Do not git pull the toolkit first")
+
+    # self-update
+    p_self = _cmd(sub, "self-update", "Upgrade the toolkit itself (machine-wide)")
+    p_self.add_argument("--check", action="store_true",
+                        help="Show what would be pulled, apply nothing")
 
     # doctor
     _cmd(sub, "doctor", "Verify .agent/ integrity")
@@ -210,6 +213,7 @@ def main():
         "search":        lambda: cmd_search(args),
         "suggest":       lambda: cmd_suggest(args),
         "update":        lambda: cmd_update(args),
+        "self-update":   lambda: cmd_self_update(args),
         "doctor":        lambda: cmd_doctor(args),
         "path":          lambda: cmd_path(args),
         "profile":       lambda: cmd_profile(args),

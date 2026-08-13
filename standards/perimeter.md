@@ -1,7 +1,8 @@
 ---
 name: perimeter
-version: 1.0.0
+version: 1.1.0
 description: Project perimeter — what the agent may read, write and execute, and why enforcement lives outside this file.
+suggested: true
 ---
 
 # perimeter.md — Project perimeter

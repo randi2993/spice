@@ -1,6 +1,6 @@
 ---
 name: token-counter
-version: 1.1.0
+version: 1.2.0
 description: Count tokens of files or text to estimate cost and manage LLM context
 shared_directive: To count tokens of a file, run `python .agent/skills/token-counter/scripts/count.py <file>`.
 category: meta
@@ -24,16 +24,25 @@ python .agent/skills/token-counter/scripts/count.py src/API/Controllers/WeaponsC
 # Count tokens of direct text
 echo "text to count" | python .agent/skills/token-counter/scripts/count.py -
 
-# Count multiple files
-python .agent/skills/token-counter/scripts/count.py src/**/*.cs
+# Count multiple files — QUOTE the pattern
+python .agent/skills/token-counter/scripts/count.py 'src/**/*.cs'
 ```
+
+Quote the pattern. Unquoted, bash expands it first and `**` is NOT recursive
+there unless `globstar` is on, while zsh and Python do recurse — the same
+command then counts a different set of files on each platform. Quoted, Python
+always expands it and the result is identical everywhere. The output states
+how many files were counted so a mismatch is visible.
 
 ## Output
 
 ```
 file:   src/API/Controllers/WeaponsController.cs
-tokens: 1,247
-model:  cl100k_base (approx. Claude/GPT-4)
+tokens: 1,247  (encoding: cl100k_base)
+chars:  4,912
+lines:  118
+
+-- 3 file(s), TOTAL: 4,812 tokens
 ```
 
 ## When to use

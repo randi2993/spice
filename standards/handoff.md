@@ -1,7 +1,8 @@
 ---
 name: handoff
-version: 1.1.0
+version: 1.2.0
 description: Role-to-role delivery formats (YAML handoffs).
+suggested: true
 ---
 
 # handoff.md — Role-to-role delivery formats

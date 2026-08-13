@@ -26,8 +26,14 @@ adapter and no project knowledge is lost — only the enforcement for one tool.
 
 - `.claude/settings.json` at the project root, merged with anything already
   there. Keys this adapter does not own are preserved untouched.
-- `.agent/hooks/guard-paths.js`, the perimeter guard, registered as a
-  `PreToolUse` hook.
+- `.agent/hooks/guard-paths.js`, copied from this adapter's own `hooks/`
+  directory and registered as a `PreToolUse` hook.
+
+The guard lives under this adapter rather than in a shared directory because
+it speaks Claude Code's hook protocol: it reads `tool_input.file_path` from the
+stdin payload and answers with `hookSpecificOutput.permissionDecision`. Another
+tool's adapter ships its own guard, reusing the path-resolution approach but
+speaking that tool's schema.
 
 ## Keys it owns
 

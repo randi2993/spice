@@ -38,18 +38,26 @@ def _color(text: str, *codes: str) -> str:
 RED  = "\033[31m"
 BOLD = "\033[1m"
 
-SUGGESTED_PROFILE = [
-    ("roles",     "implementer"),
-    ("roles",     "qa"),
-    ("roles",     "release"),
-    ("playbooks", "git"),
-    ("standards", "done"),
-    ("standards", "handoff"),
-    ("standards", "hitl"),
-    ("standards", "orchestration"),
-    ("standards", "workflow"),
-    ("standards", "perimeter"),
-]
+def _is_true(value) -> bool:
+    """The minimal frontmatter parser yields strings, so `true` arrives as text."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "yes", "1")
+
+
+def suggested_profile() -> list[tuple[str, str]]:
+    """Components flagged `suggested: true` in their own frontmatter.
+
+    This used to be a hardcoded Python list duplicating the flags in
+    manifest.json, so adding a suggested component meant editing three places
+    and nothing detected a disagreement between them.
+    """
+    profile = []
+    for ctype in ("roles", "playbooks", "standards", "skills", "adapters"):
+        for name, fm in _discover_components(ctype):
+            if _is_true(fm.get("suggested")):
+                profile.append((ctype, name))
+    return profile
 
 
 # ── init ────────────────────────────────────────────────────────────────────
@@ -80,7 +88,7 @@ def cmd_init(args):
         answer = input().strip().lower()
     if answer in ("", "y", "yes"):
         manifest = mf.load(AGENT_DIR)
-        for ctype, name in SUGGESTED_PROFILE:
+        for ctype, name in suggested_profile():
             _install_single(ctype, name, manifest, quiet=False)
         mf.save(AGENT_DIR, manifest)
         print("\n[spice] Minimal profile installed.")
@@ -291,7 +299,7 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
             print(f"    -> role registered in RULES.md (tier: {tier_str}{trig_info})")
 
     elif ctype == "adapters":
-        _install_shared_hooks()
+        _install_adapter_hooks(name)
         applied = _render_adapter(name)
         if applied and not quiet:
             print(f"    -> rendered {applied}")
@@ -398,10 +406,42 @@ def cmd_profile(args):
     print(f"  profile:     {profile.get('profile')}")
     print(f"  perimeter:   {_format_flags(profile.get('perimeter', {}))}")
     print(f"  capabilities:{_format_flags(profile.get('capabilities', {}))}")
-    adapters = sorted(_installed_adapters())
-    print(f"  adapters:    {', '.join(adapters) if adapters else '(none — nothing enforces this)'}")
     for exception in profile.get("exceptions", []):
         print(f"  exception:   {exception}")
+
+    print("\n  coverage:")
+    for line in _coverage_lines():
+        print(f"    {line}")
+
+
+# Root entry point -> the adapter that enforces the profile for that tool.
+ENTRY_POINTS = {"CLAUDE.md": "claude", "GEMINI.md": "gemini"}
+
+
+def _coverage_lines() -> list[str]:
+    """Which tools are actually protected, and which only read the rules.
+
+    Every entry point delivers the full declarative layer — RULES.md, the
+    roles, standards/perimeter.md. Only a tool with an adapter also gets
+    enforcement. Stating that per tool keeps the gap visible instead of
+    leaving it to be inferred from a list of installed adapters.
+    """
+    installed = set(_installed_adapters())
+    lines = []
+    for entry, adapter in sorted(ENTRY_POINTS.items()):
+        if not Path(entry).exists():
+            continue
+        if adapter in installed:
+            lines.append(f"{entry:<12} enforced by adapters/{adapter}")
+        else:
+            available = (TOOLKIT_ROOT / "adapters" / adapter).exists()
+            hint = (f"install adapters/{adapter}" if available
+                    else "no adapter exists yet for this tool")
+            lines.append(f"{entry:<12} rules only, nothing enforces them  ({hint})")
+    for adapter in sorted(installed):
+        if adapter not in ENTRY_POINTS.values():
+            lines.append(f"{'(' + adapter + ')':<12} adapter installed with no known entry point")
+    return lines or ["no root entry points found"]
 
 
 def _format_flags(flags: dict) -> str:
@@ -418,8 +458,15 @@ def _installed_adapters() -> list[str]:
     return [d.name for d in base.iterdir() if (d / "mapping.json").exists()]
 
 
-def _install_shared_hooks() -> None:
-    src = TOOLKIT_ROOT / "adapters" / "_shared" / "hooks"
+def _install_adapter_hooks(name: str) -> None:
+    """Copies an adapter's hook scripts into .agent/hooks/.
+
+    They live under the adapter, not in a shared directory: guard-paths.js
+    speaks Claude Code's hook protocol — its stdin payload and its deny
+    response are that tool's schema. A directory called `_shared` holding a
+    tool-specific script is a trap for whoever writes the next adapter.
+    """
+    src = TOOLKIT_ROOT / "adapters" / name / "hooks"
     if not src.exists():
         return
     dest = AGENT_DIR / "hooks"
@@ -731,8 +778,10 @@ def _matching_skills(tags: set[str]) -> list[tuple[str, dict, set[str]]]:
 # ── update ───────────────────────────────────────────────────────────────────
 
 def cmd_update(args):
+    """Reconciles this project with the installed toolkit. Never touches the
+    toolkit itself — that is `spice self-update`."""
     _require_agent_dir()
-    _pull_toolkit(args)
+    print(f"[spice] Reconciling with toolkit v{mf.toolkit_version()} at {TOOLKIT_ROOT}")
 
     drift = _core_drift()
     if drift:
@@ -782,30 +831,87 @@ def cmd_update(args):
     print(f"[spice] {updated} component(s) updated." if updated else "[spice] Up to date.")
 
 
-def _pull_toolkit(args) -> None:
-    """Fast-forwards the toolkit checkout, when there is one.
+SOURCE_MARKER = "install-source.txt"
 
-    A git repository is no longer assumed: the installed copy may have been
-    produced by install.bat rather than cloned, and a missing .git must not
-    make `spice update` fail outright.
+
+def cmd_self_update(args):
+    """Upgrades the toolkit itself. `spice update` only touches the project.
+
+    They used to be one command: `spice update`, run inside a project, did a
+    git pull on the shared toolkit and so changed every other project on the
+    machine. It also could not work at all on a normal install — install.bat
+    uses xcopy, which skips hidden entries, so the installed copy has no .git
+    and the pull failed outright.
     """
-    if getattr(args, "no_pull", False):
+    source = _toolkit_source()
+    if source is None:
+        print("[spice] Cannot locate the toolkit source checkout.")
+        print(f"        The installed copy at {TOOLKIT_ROOT} is not a git repository")
+        print(f"        and no {SOURCE_MARKER} recorded where it came from.")
+        print("        Update manually: git pull in your spice clone, then run the installer.")
+        sys.exit(1)
+
+    before = mf.toolkit_version()
+    print(f"[spice] Toolkit source: {source}")
+
+    if getattr(args, "check", False):
+        _git_report(source)
         return
-    if not (TOOLKIT_ROOT / ".git").exists():
-        print(f"[spice] Toolkit at {TOOLKIT_ROOT} is not a git checkout, skipping pull.")
-        return
-    print(f"[spice] Updating toolkit from {TOOLKIT_ROOT} ...")
+
     try:
-        result = subprocess.run(["git", "pull", "--ff-only"], cwd=TOOLKIT_ROOT,
+        result = subprocess.run(["git", "pull", "--ff-only"], cwd=source,
                                 capture_output=True, text=True)
     except FileNotFoundError:
-        print("[spice] git not found in PATH, skipping pull.")
-        return
+        print("[spice] git not found in PATH.")
+        sys.exit(1)
     if result.returncode != 0:
-        print(f"[spice] git pull failed (continuing with the local copy):")
+        print("[spice] git pull failed:")
         print(f"        {result.stderr.strip()}")
+        sys.exit(1)
+    print(f"        {result.stdout.strip()}")
+
+    if source == TOOLKIT_ROOT:
+        after = mf.toolkit_version()
+        print(f"[spice] Toolkit v{before} -> v{after}." if before != after
+              else f"[spice] Already at v{after}.")
+        print("        Run 'spice update' in each project to apply it.")
         return
-    print(result.stdout.strip())
+
+    # Installed copy is separate from the source, so the pull alone changes
+    # nothing until the installer runs again.
+    installer = "install.bat" if sys.platform == "win32" else "install.sh"
+    print(f"[spice] Source updated. The installed copy at {TOOLKIT_ROOT} is unchanged.")
+    print(f"        Reinstall to apply it:  cd {source} && {installer}")
+    print(f"        Then run 'spice update' in each project.")
+
+
+def _toolkit_source() -> Path | None:
+    """Where the toolkit is developed: this copy if cloned, else what the
+    installer recorded."""
+    if (TOOLKIT_ROOT / ".git").exists():
+        return TOOLKIT_ROOT
+    marker = TOOLKIT_ROOT / SOURCE_MARKER
+    if marker.exists():
+        candidate = Path(marker.read_text(encoding="utf-8").strip())
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _git_report(source: Path) -> None:
+    try:
+        subprocess.run(["git", "fetch"], cwd=source, capture_output=True, text=True)
+        result = subprocess.run(["git", "log", "--oneline", "HEAD..@{u}"],
+                                cwd=source, capture_output=True, text=True)
+    except FileNotFoundError:
+        print("[spice] git not found in PATH.")
+        return
+    pending = result.stdout.strip()
+    print(f"[spice] {len(pending.splitlines())} commit(s) available:" if pending
+          else "[spice] Toolkit is up to date.")
+    if pending:
+        for line in pending.splitlines():
+            print(f"          {line}")
 
 
 def _core_drift() -> list[str]:
@@ -961,6 +1067,16 @@ def cmd_doctor(args):
                         "the default. Run 'spice profile set <name>'")
     for name in adapters:
         errors.extend(_adapter_errors(name))
+
+    # An entry point with no adapter is not an error — the tool still gets the
+    # full declarative layer. But it must be visible, or a project looks
+    # uniformly protected when only one of its tools actually is.
+    if profile:
+        for entry, adapter in sorted(ENTRY_POINTS.items()):
+            if Path(entry).exists() and adapter not in adapters:
+                warnings.append(f"{entry} exists but adapters/{adapter} is not "
+                                f"installed — that tool reads the rules with "
+                                f"nothing enforcing them")
 
     # 10. Root entry points
     for fname in ("CLAUDE.md", "GEMINI.md"):

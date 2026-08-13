@@ -1,7 +1,8 @@
 ---
 name: workflow
-version: 1.0.0
+version: 1.1.0
 description: Edit protocol — old/new mandatory before modifying any file.
+suggested: true
 ---
 
 # workflow.md — Edit protocol

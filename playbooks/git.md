@@ -1,7 +1,8 @@
 ---
 name: git
-version: 1.0.0
+version: 1.1.0
 description: Git conventions for commits, branches, PRs, and tags.
+suggested: true
 ---
 
 # git.md — Git Conventions

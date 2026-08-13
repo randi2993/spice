@@ -1,7 +1,8 @@
 ---
 name: orchestration
-version: 1.0.0
+version: 1.2.0
 description: Multi-role workflow orchestration with tier self-assessment.
+suggested: true
 ---
 
 # orchestration.md — Multi-role workflow orchestration
@@ -61,6 +62,7 @@ Highest required tier: <max>
 Options:
   [a] You switch the chat to a heavier model and I proceed
   [b] I delegate each step via `spice run-agent` (subprocess)
+      -- only when the active profile allows shell; see below
   [c] I attempt all steps with the current model (may be insufficient for heavy roles)
   [d] Cancel
 
@@ -72,6 +74,11 @@ Wait for the user's choice. Do not assume.
 ---
 
 ## Executing via `spice run-agent`
+
+**Check the profile first.** `spice run-agent` launches a subprocess, so it
+needs `capabilities.shell`. Under a profile that denies the shell — `strict`
+does — option [b] is unavailable: do not offer it, and say so if the user asks
+for it. Run `spice profile show` if unsure.
 
 When the user picks option [b], for each step in the plan:
 

@@ -1,7 +1,8 @@
 ---
 name: hitl
-version: 1.0.0
+version: 1.1.0
 description: Human-In-The-Loop action classification (destructive / safe / read-only).
+suggested: true
 ---
 
 # hitl.md — Human-In-The-Loop

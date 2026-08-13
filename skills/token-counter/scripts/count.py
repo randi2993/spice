@@ -60,19 +60,36 @@ def main():
         return
 
     total = 0
+    processed = 0
     for pattern in args.files:
         if pattern == "-":
             process_stdin()
             continue
-        paths = list(Path(".").glob(pattern)) if "*" in pattern else [Path(pattern)]
-        for path in sorted(paths):
-            if path.is_file():
-                total += process_file(path)
-                if len(args.files) > 1 or len(paths) > 1:
-                    print()
 
-    if len(args.files) > 1 or (len(args.files) == 1 and "*" in args.files[0]):
-        print(f"── TOTAL: {format_number(total)} tokens")
+        # Decide by existence, not by looking for a '*': in bash the shell has
+        # already expanded the pattern, so the argument arrives as a plain
+        # filename and there is no wildcard left to detect.
+        target = Path(pattern)
+        paths = [target] if target.is_file() else sorted(Path(".").glob(pattern))
+        matched = [p for p in paths if p.is_file()]
+
+        if not matched:
+            print(f"no match: {pattern}", file=sys.stderr)
+            continue
+
+        for path in matched:
+            if processed:
+                print()
+            total += process_file(path)
+            processed += 1
+
+    if processed > 1:
+        # The file count is not decoration. `**` is recursive in zsh and in
+        # Python, but NOT in bash unless globstar is enabled, so the same
+        # command can count a different set of files on each platform. Printing
+        # what was actually counted makes that visible instead of silent.
+        print(f"-- {format_number(processed)} file(s), "
+              f"TOTAL: {format_number(total)} tokens")
 
 
 if __name__ == "__main__":

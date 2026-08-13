@@ -1,9 +1,10 @@
 ---
 name: qa
-version: 1.1.0
+version: 1.2.0
 tier: standard
 phase: verify
 description: Validates quality and Definition of Done; does not write new code.
+suggested: true
 triggers:
   - "validate"
   - "run tests"

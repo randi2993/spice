@@ -26,8 +26,8 @@ echo "alias spice='python ~/.spice/bin/spice.py'" >> ~/.zshrc
 source ~/.zshrc
 ```
 
-**Requirements:** Python 3.10+. Git only for `spice update`. `node` only if you
-install a tool adapter.
+**Requirements:** Python 3.10+. Git only for `spice self-update`. `node` only if
+you install a tool adapter.
 
 Provider configuration lives outside the install directory
 (`%APPDATA%\spice\` or `$XDG_CONFIG_HOME/spice/`) so reinstalling never
@@ -58,7 +58,8 @@ spice doctor                    # verifies everything is wired
 | `spice list [--available]` | List installed components, or everything in the toolkit. |
 | `spice search <query>` | Search by name, description, keyword or tag. |
 | `spice suggest [--yes]` | Detect the stack and offer matching skills. |
-| `spice update [--check] [--refresh-core] [--allow-downgrade] [--no-pull]` | Sync with the toolkit. |
+| `spice update [--check] [--refresh-core] [--allow-downgrade]` | Reconcile **this project** with the installed toolkit. |
+| `spice self-update [--check]` | Upgrade the **toolkit itself**, machine-wide. |
 | `spice doctor` | Verify `.agent/` integrity and the perimeter. |
 | `spice path [--open]` | Show which toolkit copy is running and where its data lives. |
 | `spice profile <show\|list\|set>` | Inspect or change the security profile. |
@@ -248,7 +249,7 @@ Detection emits both the generic and the versioned form (`angular` and
 ### Skills
 | Name | Category | Description |
 |---|---|---|
-| `token-counter` | meta | Count tokens to estimate cost and manage context. |
+| `token-counter` | meta | Count tokens to estimate cost and manage context. Requires `tiktoken`. |
 | `csharp-rest-api` | stack | C# .NET 8 REST APIs — Clean Architecture, JWT, EF Core. |
 
 ---
@@ -331,8 +332,10 @@ version: 1.0.0
 description: What it defines.
 ```
 
-3. Bump the version so `spice update` propagates the change.
-4. Run `spice update --refresh-core` in existing projects if you changed `core/`.
+3. Add `suggested: true` if it belongs in the minimal profile — the flag lives
+   in the component's own frontmatter and nowhere else.
+4. Bump the version so `spice update` propagates the change.
+5. Run `spice update --refresh-core` in existing projects if you changed `core/`.
 
 Inline lists (`[a, b]`) and dashed lists are both parsed.
 
@@ -344,7 +347,9 @@ Inline lists (`[a, b]`) and dashed lists are both parsed.
 - **Enforcement outside the prompt**: rules the model cannot argue with live in
   adapters, not in Markdown.
 - **Explicit loading**: skills are loaded declaratively, not auto-triggered.
-- **No external dependencies**: the CLI uses only the Python standard library.
+- **No external dependencies**: the CLI uses only the Python standard
+  library. A skill may declare its own (`token-counter` needs `tiktoken`), but
+  that cost falls only on whoever installs it.
 - **Minimal tokens**: the model loads only what the current task needs.
 - **HITL by default**: destructive actions require human approval — including
   spice's own.

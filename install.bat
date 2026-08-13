@@ -162,6 +162,12 @@ if errorlevel 1 (
     xcopy "%SCRIPT_DIR%" "%SPICE_DIR%" /e /i /q >nul
 )
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
+
+:: Record where this install came from, so `spice self-update` can find the
+:: source checkout. xcopy skips hidden entries, so .git is never copied and the
+:: installed copy is not a git repository.
+> "%SPICE_DIR%\install-source.txt" echo %SCRIPT_DIR%
+
 echo %CLR%%TAG_OK% Install files to %SPICE_DIR%
 
 :: ---------------------------------------------------------------

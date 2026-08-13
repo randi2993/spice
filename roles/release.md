@@ -1,9 +1,10 @@
 ---
 name: release
-version: 1.1.0
+version: 1.2.0
 tier: light
 phase: release
 description: Prepares commits, PRs, and tags following git playbook.
+suggested: true
 triggers:
   - "tag"
   - "publish"

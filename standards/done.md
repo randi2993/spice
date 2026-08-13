@@ -1,7 +1,8 @@
 ---
 name: done
-version: 1.0.0
+version: 1.1.0
 description: Definition of Done — checklist for closing a change.
+suggested: true
 ---
 
 # done.md — Definition of Done
