@@ -74,41 +74,69 @@ def cmd_init(args):
         _refresh_existing()
         return
 
-    print("[spice] Initializing .agent/ ...")
-    _copy_core()
-    _init_manifest()
-
+    # Everything is asked before anything is written. Interleaving the two
+    # meant aborting at a prompt left a half-built .agent/ behind — which the
+    # next `spice init` then refused to touch, because it already existed.
     tools = _choose_tools(args, assume_yes)
-    prof.save(AGENT_DIR, prof.build(prof.available().get("default", "standard"), tools))
-    _create_root_entrypoints(tools)
+    want_profile = _confirm_profile(assume_yes)
+    want_onboard = _confirm_onboarding(args, assume_yes)
 
-    # Install suggested profile
+    print("\n[spice] Initializing .agent/ ...")
+    created_files: list[Path] = []
+    try:
+        _copy_core()
+        _init_manifest()
+        prof.save(AGENT_DIR,
+                  prof.build(prof.available().get("default", "standard"), tools))
+        created_files = _create_root_entrypoints(tools)
+
+        if want_profile:
+            manifest = mf.load(AGENT_DIR)
+            for ctype, name in suggested_profile():
+                _install_single(ctype, name, manifest, quiet=False)
+            mf.save(AGENT_DIR, manifest)
+            print("\n[spice] Minimal profile installed.")
+        else:
+            print("[spice] Profile skipped. Use 'spice add <component>' when ready.")
+    except BaseException:
+        _rollback_init(created_files)
+        raise
+
+    # Onboarding only fills in CONTEXT.md, so aborting here leaves a complete
+    # installation rather than a broken one.
+    if want_onboard:
+        _run_onboarding()
+
+    print("\n[spice] Done. Open your CLI of choice in this project.")
+
+
+def _confirm_profile(assume_yes: bool) -> bool:
     if assume_yes:
         print("\n[spice] --yes: installing suggested minimal profile.")
-        answer = "y"
-    else:
-        print("\n[spice] Install suggested minimal profile? [Y/n]: ", end="", flush=True)
-        answer = input().strip().lower()
-    if answer in ("", "y", "yes"):
-        manifest = mf.load(AGENT_DIR)
-        for ctype, name in suggested_profile():
-            _install_single(ctype, name, manifest, quiet=False)
-        mf.save(AGENT_DIR, manifest)
-        print("\n[spice] Minimal profile installed.")
-    else:
-        print("[spice] Profile skipped. Use 'spice add <component>' when ready.")
+        return True
+    print("\n[spice] Install suggested minimal profile? [Y/n]: ", end="", flush=True)
+    return input().strip().lower() in ("", "y", "yes")
 
-    # Onboarding
+
+def _confirm_onboarding(args, assume_yes: bool) -> bool:
     if assume_yes:
-        print("\n[spice] --yes: skipping interactive onboarding.")
+        print("[spice] --yes: skipping interactive onboarding.")
         print("        Run 'spice onboard' when you want to fill in project context.")
-    elif not getattr(args, "no_onboard", False):
-        print("\n[spice] Run interactive onboarding now? [Y/n]: ", end="", flush=True)
-        answer = input().strip().lower()
-        if answer in ("", "y", "yes"):
-            _run_onboarding()
+        return False
+    if getattr(args, "no_onboard", False):
+        return False
+    print("[spice] Run interactive onboarding now? [Y/n]: ", end="", flush=True)
+    return input().strip().lower() in ("", "y", "yes")
 
-    print("\n[spice] Done. Open Claude Code (or your CLI of choice) in this project.")
+
+def _rollback_init(created_files: list[Path]) -> None:
+    """Leaves the directory as it was found, rather than half initialised."""
+    for path in created_files:
+        if path.exists():
+            path.unlink()
+    if AGENT_DIR.exists():
+        shutil.rmtree(AGENT_DIR, ignore_errors=True)
+    print("\n[spice] Interrupted. Nothing was left behind.")
 
 
 def _choose_tools(args, assume_yes: bool) -> list[str]:
@@ -137,7 +165,7 @@ def _choose_tools(args, assume_yes: bool) -> list[str]:
         enforcement = ("adapter available" if spec.get("adapter")
                        else "no adapter yet — rules only")
         print(f"    {key:<10} {spec['name']:<14} ({enforcement})")
-    print(f"\n  Names comma-separated, or 'all'"
+    print(f"\n  Names comma-separated, 'all', or 'none'"
           f"  [Enter for {', '.join(default)}]: ", end="", flush=True)
 
     answer = input().strip()
@@ -148,14 +176,31 @@ def _choose_tools(args, assume_yes: bool) -> list[str]:
     # default would target something the user did not ask for.
     for name in unknown:
         print(f"  ! unknown tool '{name}', ignored")
-    return chosen or default
+    if unknown and not chosen:
+        return default
+    if not chosen:
+        print("  No tool targeted. Add one later with 'spice tools add <name>'.")
+    return chosen
+
+
+ALL_KEYWORDS  = ("all", "*", "todas", "todos")
+NONE_KEYWORDS = ("none", "-", "ninguno", "ninguna")
 
 
 def _parse_tool_selection(text: str, catalog: dict) -> tuple[list[str], list[str]]:
-    """Parses a selection into (known, unknown). `all` expands the catalogue."""
+    """Parses a selection into (known, unknown).
+
+    `all` expands the catalogue; `none` targets nothing, which is a legitimate
+    choice for a project that uses no tool spice knows about — it still gets
+    the whole .agent/ structure and can add one later.
+    """
     names = [t.strip() for t in text.split(",") if t.strip()]
-    if len(names) == 1 and names[0].lower() in ("all", "*", "todas", "todos"):
-        return list(catalog), []
+    if len(names) == 1:
+        keyword = names[0].lower()
+        if keyword in ALL_KEYWORDS:
+            return list(catalog), []
+        if keyword in NONE_KEYWORDS:
+            return [], []
     return ([n for n in names if n in catalog],
             [n for n in names if n not in catalog])
 
@@ -250,8 +295,8 @@ def _reinject_roster(manifest: dict) -> int:
 ENTRY_CONTENT = "Read `.agent/RULES.md` and follow all instructions before executing any task.\n"
 
 
-def _create_root_entrypoints(tools: list[str] | None = None):
-    """One entry point per targeted tool.
+def _create_root_entrypoints(tools: list[str] | None = None) -> list[Path]:
+    """One entry point per targeted tool. Returns the files newly created.
 
     Both CLAUDE.md and GEMINI.md used to be created unconditionally while the
     adapters that enforce them were opt-in — automatic on one layer, selective
@@ -261,6 +306,7 @@ def _create_root_entrypoints(tools: list[str] | None = None):
     catalog = prof.known_tools()
     if tools is None:
         tools = prof.selected_tools(AGENT_DIR)
+    created = []
     for key in tools:
         spec = catalog.get(key)
         if not spec:
@@ -272,6 +318,9 @@ def _create_root_entrypoints(tools: list[str] | None = None):
             continue
         p.write_text(ENTRY_CONTENT, encoding="utf-8")
         print(f"  {'updated' if existing else 'created'}: {spec['entry_point']}")
+        if not existing:
+            created.append(p)
+    return created
 
 
 def _init_manifest():
@@ -1204,7 +1253,12 @@ def cmd_doctor(args):
     # uniformly protected when only one of its tools actually is.
     if profile:
         catalog = prof.known_tools()
-        for key in prof.selected_tools(AGENT_DIR):
+        targeted = prof.selected_tools(AGENT_DIR)
+        if not targeted:
+            warnings.append("No tool targeted, so no entry point exists and "
+                            "nothing reads .agent/RULES.md. Add one with "
+                            "'spice tools add <name>'")
+        for key in targeted:
             spec = catalog.get(key)
             if not spec:
                 warnings.append(f"Project targets unknown tool '{key}'")

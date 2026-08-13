@@ -91,8 +91,12 @@ At the **project root**, one entry point per tool the project targets:
 CLAUDE.md             # Entry point for Claude Code → reads .agent/RULES.md
 ```
 
-`spice init` asks which tools will work on the project. Answer with names, or
-`all`; `--tools claude,gemini` and `--tools all` answer it up front. Both files used to be created unconditionally while the
+`spice init` asks which tools will work on the project. Answer with names,
+`all`, or `none`; `--tools` answers it up front. Every question is asked before
+anything is written, so aborting at a prompt leaves the directory untouched.
+
+`none` is a real choice: the project gets the whole `.agent/` structure with no
+entry point, and `spice tools add` wires one up later. Both files used to be created unconditionally while the
 adapters that enforce them were opt-in — automatic on one layer, selective on
 the other.
 
