@@ -38,11 +38,14 @@ destroys it. Run `spice path` to see every location.
 ## Quick start
 
 ```bash
-spice init                      # creates .agent/, CLAUDE.md and GEMINI.md
+spice init                      # asks which tools, installs their adapters
 spice suggest                   # detects your stack, offers matching skills
-spice add adapters/claude       # enforces the security profile for Claude Code
 spice doctor                    # verifies everything is wired
 ```
+
+Targeting a tool installs its adapter, so enforcement arrives with the rules
+rather than as a step you have to know about. `spice remove adapters/<name>`
+drops it if you would rather manage that tool's config yourself.
 
 `spice init --yes` does the whole thing without prompting.
 
@@ -271,7 +274,7 @@ source files actually present.
 ### Adapters
 | Name | Renders | Description |
 |---|---|---|
-| `claude` | `.claude/settings.json` | Enforces the profile for Claude Code. |
+| `claude` | `.claude/settings.json` | Enforces the profile for Claude Code. Installed with the tool. |
 
 ### Skills
 | Name | Category | Description |

@@ -45,18 +45,31 @@ def _is_true(value) -> bool:
     return str(value).strip().lower() in ("true", "yes", "1")
 
 
-def suggested_profile() -> list[tuple[str, str]]:
+def suggested_profile(tools: list[str] | None = None) -> list[tuple[str, str]]:
     """Components flagged `suggested: true` in their own frontmatter.
 
     This used to be a hardcoded Python list duplicating the flags in
     manifest.json, so adding a suggested component meant editing three places
     and nothing detected a disagreement between them.
+
+    Adapters are filtered by the tools the project targets: installing the
+    Claude adapter into a project that only uses Gemini would write a config
+    for a tool nobody runs.
     """
+    wanted_adapters = None
+    if tools is not None:
+        catalog = prof.known_tools()
+        wanted_adapters = {catalog[t]["adapter"] for t in tools
+                           if t in catalog and catalog[t].get("adapter")}
+
     profile = []
     for ctype in ("roles", "playbooks", "standards", "skills", "adapters"):
         for name, fm in _discover_components(ctype):
-            if _is_true(fm.get("suggested")):
-                profile.append((ctype, name))
+            if not _is_true(fm.get("suggested")):
+                continue
+            if ctype == "adapters" and wanted_adapters is not None                     and name not in wanted_adapters:
+                continue
+            profile.append((ctype, name))
     return profile
 
 
@@ -92,7 +105,7 @@ def cmd_init(args):
 
         if want_profile:
             manifest = mf.load(AGENT_DIR)
-            for ctype, name in suggested_profile():
+            for ctype, name in suggested_profile(tools):
                 _install_single(ctype, name, manifest, quiet=False)
             mf.save(AGENT_DIR, manifest)
             print("\n[spice] Minimal profile installed.")
@@ -599,7 +612,12 @@ def cmd_tools(args):
         _create_root_entrypoints([args.name])
         adapter = spec.get("adapter")
         if adapter and (TOOLKIT_ROOT / "adapters" / adapter).exists():
-            print(f"        Install its enforcement with 'spice add adapters/{adapter}'.")
+            if adapter in _installed_adapters():
+                print(f"        adapters/{adapter} is already installed.")
+            else:
+                manifest = mf.load(AGENT_DIR)
+                _install_single("adapters", adapter, manifest, quiet=False)
+                mf.save(AGENT_DIR, manifest)
         else:
             print(f"        No adapter exists for {spec['name']} yet: it reads the "
                   f"rules with nothing enforcing them.")

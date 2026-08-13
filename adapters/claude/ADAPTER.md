@@ -2,6 +2,7 @@
 name: claude
 version: 1.0.0
 description: Renders the active profile into Claude Code's settings.json.
+suggested: true
 target: Claude Code
 renders: .claude/settings.json
 depends_on: []
