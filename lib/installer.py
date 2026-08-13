@@ -2,6 +2,7 @@
 installer.py — Command implementations.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,20 @@ import providers as prov
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 AGENT_DIR    = Path(".agent")
+
+# Directories inside .agent/ owned by the user, never overwritten by a refresh.
+USER_OWNED = ("memory", "project")
+
+
+def _color(text: str, *codes: str) -> str:
+    """ANSI colour, skipped when output is redirected."""
+    if not sys.stdout.isatty():
+        return text
+    return "".join(codes) + text + "\033[0m"
+
+
+RED  = "\033[31m"
+BOLD = "\033[1m"
 
 SUGGESTED_PROFILE = [
     ("roles",     "implementer"),
@@ -32,10 +47,16 @@ SUGGESTED_PROFILE = [
 # ── init ────────────────────────────────────────────────────────────────────
 
 def cmd_init(args):
-    if AGENT_DIR.exists() and not args.force:
-        print("[spice] .agent/ already exists in this directory.")
-        print("        Use --force to overwrite.")
-        sys.exit(1)
+    assume_yes = getattr(args, "yes", False)
+
+    if AGENT_DIR.exists():
+        if not args.force:
+            print("[spice] .agent/ already exists in this directory.")
+            print("        Use --force to refresh templates, or 'spice factory-reset'")
+            print("        to delete everything and start over.")
+            sys.exit(1)
+        _refresh_existing()
+        return
 
     print("[spice] Initializing .agent/ ...")
     _copy_core()
@@ -43,8 +64,12 @@ def cmd_init(args):
     _init_manifest()
 
     # Install suggested profile
-    print("\n[spice] Install suggested minimal profile? [Y/n]: ", end="", flush=True)
-    answer = input().strip().lower()
+    if assume_yes:
+        print("\n[spice] --yes: installing suggested minimal profile.")
+        answer = "y"
+    else:
+        print("\n[spice] Install suggested minimal profile? [Y/n]: ", end="", flush=True)
+        answer = input().strip().lower()
     if answer in ("", "y", "yes"):
         manifest = mf.load(AGENT_DIR)
         for ctype, name in SUGGESTED_PROFILE:
@@ -55,7 +80,10 @@ def cmd_init(args):
         print("[spice] Profile skipped. Use 'spice add <component>' when ready.")
 
     # Onboarding
-    if not getattr(args, "no_onboard", False):
+    if assume_yes:
+        print("\n[spice] --yes: skipping interactive onboarding.")
+        print("        Run 'spice onboard' when you want to fill in project context.")
+    elif not getattr(args, "no_onboard", False):
         print("\n[spice] Run interactive onboarding now? [Y/n]: ", end="", flush=True)
         answer = input().strip().lower()
         if answer in ("", "y", "yes"):
@@ -64,11 +92,69 @@ def cmd_init(args):
     print("\n[spice] Done. Open Claude Code (or your CLI of choice) in this project.")
 
 
-def _copy_core():
+def _refresh_existing():
+    """`init --force`: refresh toolkit templates, keep everything the user owns.
+
+    It used to delete .agent/ wholesale, taking ADRs, learned facts, project
+    state and run history with it. Wiping is now 'spice factory-reset'.
+    """
+    print("[spice] Refreshing .agent/ templates ...")
+    print(f"        Preserved: {', '.join(d + '/' for d in USER_OWNED)}, installed.json")
+
+    manifest = mf.load(AGENT_DIR)
+    _copy_core(preserve_user_data=True)
+    _create_root_entrypoints()
+    mf.save(AGENT_DIR, manifest)
+
+    # RULES.md came back as a blank template, so its roster must be rebuilt
+    # from the manifest or the two would silently disagree.
+    restored = _reinject_roster(manifest)
+    print(f"[spice] Templates refreshed. {restored} component(s) re-registered in RULES.md.")
+
+
+def _copy_core(preserve_user_data: bool = False):
     core_src = TOOLKIT_ROOT / "core"
-    if AGENT_DIR.exists():
+    if not AGENT_DIR.exists():
+        shutil.copytree(core_src, AGENT_DIR)
+        return
+    if not preserve_user_data:
         shutil.rmtree(AGENT_DIR)
-    shutil.copytree(core_src, AGENT_DIR)
+        shutil.copytree(core_src, AGENT_DIR)
+        return
+    for item in core_src.iterdir():
+        dest = AGENT_DIR / item.name
+        if item.name in USER_OWNED and dest.exists():
+            continue
+        if item.is_dir():
+            shutil.copytree(item, dest, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, dest)
+
+
+def _reinject_roster(manifest: dict) -> int:
+    """Rebuilds the SPICE:ROLES / SPICE:SKILLS blocks from the manifest."""
+    rules_path = AGENT_DIR / "RULES.md"
+    count = 0
+    for entry in manifest.get("components", {}).values():
+        ctype, name = entry["type"], entry["name"]
+        src = _toolkit_component_path(ctype, name)
+        if not src.exists():
+            continue
+        fm = dr.get_frontmatter(src)
+        if ctype == "roles":
+            triggers = fm.get("triggers", [])
+            if isinstance(triggers, str):
+                triggers = [triggers]
+            re_mod.inject_role(rules_path, name, entry["version"],
+                               entry.get("tier") or "standard",
+                               fm.get("description", ""), triggers)
+            count += 1
+        elif ctype == "skills":
+            directive = fm.get("shared_directive", "")
+            if directive:
+                re_mod.inject_skill(rules_path, name, entry["version"], directive)
+                count += 1
+    return count
 
 
 def _create_root_entrypoints():
@@ -211,6 +297,109 @@ def cmd_remove(args):
     mf.remove_record(manifest, ctype, name)
     mf.save(AGENT_DIR, manifest)
     print(f"[spice] Removed {ctype}/{name}.")
+
+
+# ── factory-reset ────────────────────────────────────────────────────────────
+
+def cmd_factory_reset(args):
+    """Deletes .agent/ entirely. This is what `init --force` used to do silently."""
+    _require_agent_dir()
+
+    print()
+    print(_color("  ╔════════════════════════════════════════════════════════╗", RED, BOLD))
+    print(_color("  ║                     FACTORY RESET                      ║", RED, BOLD))
+    print(_color("  ╚════════════════════════════════════════════════════════╝", RED, BOLD))
+    print()
+    print(_color("  This DELETES .agent/ and everything inside it.", RED))
+    print("  The following will be permanently lost:")
+    print()
+    for line in _reset_inventory():
+        print(f"    - {line}")
+    print()
+    print("  If you only want fresh templates, cancel and run 'spice init --force'")
+    print("  instead — it keeps memory/ and project/.")
+    print()
+
+    if not getattr(args, "yes", False):
+        print(_color("  Type 'reset' to confirm: ", RED, BOLD), end="", flush=True)
+        if input().strip().lower() != "reset":
+            print("[spice] Aborted. Nothing was deleted.")
+            sys.exit(0)
+
+    shutil.rmtree(AGENT_DIR)
+    print(f"[spice] .agent/ deleted. Run 'spice init' to start over.")
+
+
+def _reset_inventory() -> list[str]:
+    """What the user actually loses, with enough detail to think twice."""
+    items = []
+    mem = AGENT_DIR / "memory"
+    if mem.exists():
+        for f in sorted(mem.glob("*.md")):
+            items.append(f"memory/{f.name}  ({_content_lines(f)} non-empty lines)")
+        runs = mem / "runs"
+        if runs.exists():
+            items.append(f"memory/runs/  ({len(list(runs.glob('*')))} file(s))")
+    ctx = AGENT_DIR / "project" / "CONTEXT.md"
+    if ctx.exists():
+        items.append(f"project/CONTEXT.md  ({_content_lines(ctx)} non-empty lines)")
+    arch = AGENT_DIR / "project" / "architecture.md"
+    if arch.exists():
+        items.append(f"project/architecture.md  ({_content_lines(arch)} non-empty lines)")
+    n = len(mf.load(AGENT_DIR).get("components", {}))
+    items.append(f"{n} installed component(s)")
+    return items
+
+
+def _content_lines(path: Path) -> int:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    return sum(1 for line in text.splitlines()
+               if line.strip() and not line.strip().startswith(("#", "<!--", ">")))
+
+
+# ── path ─────────────────────────────────────────────────────────────────────
+
+def cmd_path(args):
+    """Shows which spice is running and where its data lives."""
+    launcher = _launcher_path()
+    providers_file = prov.PROVIDERS_FILE
+
+    print(f"  toolkit:    {TOOLKIT_ROOT}")
+    print(f"  launcher:   {launcher if launcher else '(not found)'}")
+    print(f"  providers:  {providers_file}"
+          f"{'' if providers_file.exists() else '   (not created yet)'}")
+    if AGENT_DIR.exists():
+        print(f"  project:    {AGENT_DIR.resolve()}")
+    else:
+        print(f"  project:    (no .agent/ in {Path.cwd()})")
+
+    if getattr(args, "open", False):
+        _open_in_file_manager(TOOLKIT_ROOT)
+
+
+def _launcher_path() -> Path | None:
+    candidates = ["spice.bat", "spice.py"] if sys.platform == "win32" else ["spice.py"]
+    for name in candidates:
+        candidate = TOOLKIT_ROOT / "bin" / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _open_in_file_manager(path: Path) -> None:
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
+        print(f"[spice] Opened {path}")
+    except Exception as e:
+        print(f"[spice] Could not open {path}: {e}")
 
 
 # ── list ─────────────────────────────────────────────────────────────────────

@@ -13,12 +13,23 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from installer import (
     cmd_init, cmd_add, cmd_remove, cmd_list, cmd_update, cmd_doctor,
-    cmd_onboard, cmd_run_agent, cmd_providers, cmd_search
+    cmd_onboard, cmd_run_agent, cmd_providers, cmd_search, cmd_path,
+    cmd_factory_reset
 )
 
 MIN_PYTHON = (3, 10)
 if sys.version_info < MIN_PYTHON:
     sys.exit(f"spice requires Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+. You have {sys.version}")
+
+# The CLI prints arrows, em dashes and box characters. On a Windows console
+# using a legacy code page — and on ANY platform when stdout is redirected to
+# a pipe or a file — those raise UnicodeEncodeError and abort the command
+# mid-run. `spice init` died at the profile step for exactly this reason.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # pragma: no cover - very old consoles
+        pass
 
 
 HELP_BANNER = """spice — agent toolkit
@@ -27,25 +38,18 @@ HELP_BANNER = """spice — agent toolkit
 
 EPILOG = """
 examples:
-  spice init                           Initialize .agent/ + onboarding
-  spice list                           List installed components
-  spice list --available               List ALL components in toolkit
-  spice search documenter              Search components by keyword
-  spice add roles/documenter           Install the documenter role
-  spice add skills/csharp-rest-api     Install a skill
-  spice remove roles/refactor          Uninstall a component
-  spice doctor                         Verify .agent/ integrity
-  spice onboard                        Re-run interactive onboarding
-  spice update                         Sync with latest toolkit version
-
-  spice providers setup                Configure first LLM provider
-  spice providers add anthropic        Add provider (interactive)
-  spice providers list                 List configured providers
-  spice providers remove anthropic     Remove provider
+  spice init --yes                     Initialize without any prompts
+  spice add roles/documenter           Install a component (type/name)
+  spice update --check                 See what would change, apply nothing
 
   spice run-agent --role qa --model sonnet --provider anthropic \\
-                  --context "Validate the latest changes"
+                  --context-file handoff.yaml
 """
+
+
+def _cmd(sub, name, summary, **kwargs):
+    """Registers a subcommand. `summary` feeds both the listing and its own -h."""
+    return sub.add_parser(name, help=summary, description=summary, **kwargs)
 
 
 def build_parser():
@@ -58,45 +62,57 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     # init
-    p_init = sub.add_parser("init", help="Initialize .agent/ in current project")
-    p_init.add_argument("--force", action="store_true", help="Overwrite if .agent/ exists")
+    p_init = _cmd(sub, "init", "Initialize .agent/ in current project")
+    p_init.add_argument("--force", action="store_true",
+                        help="Refresh templates, keeping memory/ and project/")
     p_init.add_argument("--no-onboard", action="store_true", help="Skip interactive onboarding")
+    p_init.add_argument("--yes", "-y", action="store_true",
+                        help="Accept the suggested profile and skip all prompts")
 
     # add
-    p_add = sub.add_parser("add", help="Install a component")
+    p_add = _cmd(sub, "add", "Install a component")
     p_add.add_argument("component", help="e.g. roles/qa, skills/csharp-rest-api")
     p_add.add_argument("--from", dest="from_path", help="Local path outside the toolkit")
 
     # remove
-    p_remove = sub.add_parser("remove", help="Uninstall a component")
+    p_remove = _cmd(sub, "remove", "Uninstall a component")
     p_remove.add_argument("component", help="e.g. roles/security")
     p_remove.add_argument("--yes", action="store_true", help="Skip confirmation")
 
     # list
-    p_list = sub.add_parser("list", help="List components")
+    p_list = _cmd(sub, "list", "List components")
     p_list.add_argument("--available", action="store_true",
                         help="Show all components in the toolkit (installed and not)")
     p_list.add_argument("--all", action="store_true",
                         help="Same as --available")
 
     # search
-    p_search = sub.add_parser("search", help="Search components by name or description")
+    p_search = _cmd(sub, "search", "Search components by name or description")
     p_search.add_argument("query", help="Keyword to search")
 
     # update
-    p_update = sub.add_parser("update", help="Sync with latest toolkit version")
+    p_update = _cmd(sub, "update", "Sync with latest toolkit version")
     p_update.add_argument("--check", action="store_true", help="Show diff only, don't apply")
     p_update.add_argument("--allow-downgrade", action="store_true",
                           help="Apply components whose toolkit version is older than installed")
 
     # doctor
-    sub.add_parser("doctor", help="Verify .agent/ integrity")
+    _cmd(sub, "doctor", "Verify .agent/ integrity")
+
+    # path
+    p_path = _cmd(sub, "path", "Show where spice and its data live")
+    p_path.add_argument("--open", action="store_true",
+                        help="Open the toolkit directory in the file manager")
+
+    # factory-reset
+    p_reset = _cmd(sub, "factory-reset", "Delete .agent/ entirely and start over")
+    p_reset.add_argument("--yes", action="store_true", help="Skip the typed confirmation")
 
     # onboard
-    sub.add_parser("onboard", help="Run interactive project onboarding")
+    _cmd(sub, "onboard", "Run interactive project onboarding")
 
     # run-agent
-    p_run = sub.add_parser("run-agent", help="Execute a role with given model/provider")
+    p_run = _cmd(sub, "run-agent", "Execute a role with given model/provider")
     p_run.add_argument("--role",     required=True, help="Role to execute (e.g. qa)")
     p_run.add_argument("--model",    required=True, help="Model name (e.g. sonnet, gemini-pro)")
     p_run.add_argument("--provider", required=True, help="Provider name from providers.json")
@@ -107,11 +123,9 @@ def build_parser():
     p_run.add_argument("--output",   help="Path to write output (default: .agent/memory/runs/<ts>-<role>.md)")
 
     # providers
-    p_prov = sub.add_parser(
-        "providers",
-        help="Manage LLM provider configurations",
-        description="Manage LLM provider configurations (~/.spice/providers.json)",
-        epilog="examples:\n  spice providers setup\n  spice providers add anthropic\n  spice providers list",
+    p_prov = _cmd(
+        sub, "providers", "Manage LLM provider configurations",
+        epilog="examples:\n  spice providers setup\n  spice providers add anthropic\n  spice providers list\n\nConfig location: run 'spice path'",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     prov_sub = p_prov.add_subparsers(dest="prov_command", metavar="<subcommand>")
@@ -122,7 +136,45 @@ def build_parser():
     p_prov_rm = prov_sub.add_parser("remove", help="Remove a provider")
     p_prov_rm.add_argument("name")
 
+    # The command listing is rendered from the parser itself, so a new flag is
+    # visible in `spice -h` the moment it is declared. The hand-written epilog
+    # used to be the only place flags appeared, and it had drifted: --force,
+    # --no-onboard, --from, --yes, --check and --output were undiscoverable.
+    parser.format_help = lambda: _render_help(parser, sub)  # type: ignore[method-assign]
     return parser
+
+
+def _optional_flags(subparser) -> list[str]:
+    """Longest form of each non-required flag, minus --help."""
+    flags = []
+    for action in subparser._actions:
+        if not action.option_strings or action.required:
+            continue
+        if "-h" in action.option_strings:
+            continue
+        flags.append(max(action.option_strings, key=len))
+    return flags
+
+
+def _render_help(parser, sub) -> str:
+    rows = [(name, (p.description or "").strip(), _optional_flags(p))
+            for name, p in sub.choices.items()]
+    name_w = max(len(n) for n, _, _ in rows) + 2
+    desc_w = max(len(d) for _, d, _ in rows) + 2
+
+    lines = [parser.format_usage().rstrip(), "", HELP_BANNER.rstrip(), "", "commands:"]
+    for name, desc, flags in rows:
+        suffix = " ".join(f"[{f}]" for f in flags)
+        lines.append(f"  {name.ljust(name_w)}{desc.ljust(desc_w) if suffix else desc}{suffix}".rstrip())
+
+    lines += ["", "options:"]
+    for action in parser._actions:
+        if action.option_strings:
+            lines.append(f"  {', '.join(action.option_strings).ljust(name_w)}{action.help or ''}")
+
+    lines += ["", "Run 'spice <command> -h' for the full options of a command.",
+              EPILOG.rstrip(), ""]
+    return "\n".join(lines)
 
 
 def main():
@@ -130,21 +182,22 @@ def main():
     args = parser.parse_args()
 
     if args.command is None:
-        print(HELP_BANNER)
         parser.print_help()
         sys.exit(0)
 
     dispatch = {
-        "init":      lambda: cmd_init(args),
-        "add":       lambda: cmd_add(args),
-        "remove":    lambda: cmd_remove(args),
-        "list":      lambda: cmd_list(args),
-        "search":    lambda: cmd_search(args),
-        "update":    lambda: cmd_update(args),
-        "doctor":    lambda: cmd_doctor(args),
-        "onboard":   lambda: cmd_onboard(args),
-        "run-agent": lambda: cmd_run_agent(args),
-        "providers": lambda: cmd_providers(args),
+        "init":          lambda: cmd_init(args),
+        "add":           lambda: cmd_add(args),
+        "remove":        lambda: cmd_remove(args),
+        "list":          lambda: cmd_list(args),
+        "search":        lambda: cmd_search(args),
+        "update":        lambda: cmd_update(args),
+        "doctor":        lambda: cmd_doctor(args),
+        "path":          lambda: cmd_path(args),
+        "factory-reset": lambda: cmd_factory_reset(args),
+        "onboard":       lambda: cmd_onboard(args),
+        "run-agent":     lambda: cmd_run_agent(args),
+        "providers":     lambda: cmd_providers(args),
     }
 
     try:

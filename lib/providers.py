@@ -1,14 +1,40 @@
 """
-providers.py — Manages ~/.spice/providers.json (global LLM provider config).
+providers.py — Manages the global LLM provider config.
+
+The file used to live in ~/.spice/, which is the directory the installer wipes
+on every reinstall, so reinstalling silently destroyed the user's providers.
+Config now lives outside the install directory, and is migrated on first use.
 """
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 
-PROVIDERS_FILE = Path.home() / ".spice" / "providers.json"
+
+def _config_dir() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA")
+        return Path(base) / "spice" if base else Path.home() / "AppData" / "Roaming" / "spice"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "spice"
+
+
+PROVIDERS_FILE = _config_dir() / "providers.json"
+LEGACY_PROVIDERS_FILE = Path.home() / ".spice" / "providers.json"
+
+
+def _migrate_legacy() -> None:
+    """Moves a pre-existing config out of the install directory, once."""
+    if PROVIDERS_FILE.exists() or not LEGACY_PROVIDERS_FILE.exists():
+        return
+    PROVIDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(LEGACY_PROVIDERS_FILE, PROVIDERS_FILE)
+    print(f"[spice] providers.json migrated to {PROVIDERS_FILE}")
+    print(f"        (the old path lives inside the directory the installer deletes)")
 
 
 def load() -> dict:
+    _migrate_legacy()
     if not PROVIDERS_FILE.exists():
         return {"providers": {}, "default": None}
     with open(PROVIDERS_FILE, encoding="utf-8") as f:

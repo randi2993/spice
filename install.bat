@@ -124,8 +124,9 @@ set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 if exist "%SPICE_DIR%" (
     echo.
     echo !TAG_WARN! %ESC%[33mAn existing installation was found at: %SPICE_DIR%%ESC%[0m
-    echo %ESC%[31m    Overwriting will DELETE its current contents,%ESC%[0m
-    echo %ESC%[31m    including any local config, logs or custom files.%ESC%[0m
+    echo %ESC%[31m    Overwriting will DELETE its current contents.%ESC%[0m
+    echo %ESC%[33m    providers.json will be preserved automatically.%ESC%[0m
+    echo %ESC%[31m    Any other custom file placed there will be lost.%ESC%[0m
     echo.
     set "CONFIRM="
     set /p "CONFIRM=Do you want to overwrite it? [y/N]: "
@@ -135,6 +136,16 @@ if exist "%SPICE_DIR%" (
         echo !TAG_WARN! %ESC%[33mInstallation cancelled by user %ESC%[0m
         pause
         exit /b 1
+    )
+
+    :: providers.json used to live inside %SPICE_DIR%, so every reinstall
+    :: destroyed it. Move it out before wiping; spice reads the new path.
+    if exist "%SPICE_DIR%\providers.json" (
+        if not exist "%APPDATA%\spice" mkdir "%APPDATA%\spice"
+        if not exist "%APPDATA%\spice\providers.json" (
+            copy /y "%SPICE_DIR%\providers.json" "%APPDATA%\spice\providers.json" >nul
+            echo %TAG_OK% Preserved providers.json to %APPDATA%\spice\
+        )
     )
 
     <nul set /p "=%TAG_RUN% Remove previous installation"
