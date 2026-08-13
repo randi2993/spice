@@ -91,8 +91,8 @@ At the **project root**, one entry point per tool the project targets:
 CLAUDE.md             # Entry point for Claude Code → reads .agent/RULES.md
 ```
 
-`spice init` asks which tools will work on the project; `--tools claude,gemini`
-answers it up front. Both files used to be created unconditionally while the
+`spice init` asks which tools will work on the project. Answer with names, or
+`all`; `--tools claude,gemini` and `--tools all` answer it up front. Both files used to be created unconditionally while the
 adapters that enforce them were opt-in — automatic on one layer, selective on
 the other.
 

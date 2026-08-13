@@ -120,11 +120,10 @@ def _choose_tools(args, assume_yes: bool) -> list[str]:
     catalog = prof.known_tools()
     explicit = getattr(args, "tools", None)
     if explicit:
-        chosen = [t.strip() for t in explicit.split(",") if t.strip()]
-        unknown = [t for t in chosen if t not in catalog]
+        chosen, unknown = _parse_tool_selection(explicit, catalog)
         if unknown:
             print(f"[spice] Unknown tool(s): {', '.join(unknown)}")
-            print(f"        Known: {', '.join(sorted(catalog))}")
+            print(f"        Known: {', '.join(sorted(catalog))}, or 'all'")
             sys.exit(1)
         return chosen
 
@@ -135,15 +134,30 @@ def _choose_tools(args, assume_yes: bool) -> list[str]:
 
     print("\n[spice] Which tools will work on this project?\n")
     for key, spec in catalog.items():
-        enforcement = (f"adapter available" if spec.get("adapter")
+        enforcement = ("adapter available" if spec.get("adapter")
                        else "no adapter yet — rules only")
         print(f"    {key:<10} {spec['name']:<14} ({enforcement})")
-    print(f"\n  Comma-separated [Enter for {', '.join(default)}]: ", end="", flush=True)
+    print(f"\n  Names comma-separated, or 'all'"
+          f"  [Enter for {', '.join(default)}]: ", end="", flush=True)
+
     answer = input().strip()
     if not answer:
         return default
-    chosen = [t.strip() for t in answer.split(",") if t.strip() in catalog]
+    chosen, unknown = _parse_tool_selection(answer, catalog)
+    # Reporting the typo matters: silently dropping it and falling back to the
+    # default would target something the user did not ask for.
+    for name in unknown:
+        print(f"  ! unknown tool '{name}', ignored")
     return chosen or default
+
+
+def _parse_tool_selection(text: str, catalog: dict) -> tuple[list[str], list[str]]:
+    """Parses a selection into (known, unknown). `all` expands the catalogue."""
+    names = [t.strip() for t in text.split(",") if t.strip()]
+    if len(names) == 1 and names[0].lower() in ("all", "*", "todas", "todos"):
+        return list(catalog), []
+    return ([n for n in names if n in catalog],
+            [n for n in names if n not in catalog])
 
 
 def _refresh_existing():

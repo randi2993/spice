@@ -69,7 +69,7 @@ def build_parser():
     p_init.add_argument("--yes", "-y", action="store_true",
                         help="Accept the suggested profile and skip all prompts")
     p_init.add_argument("--tools",
-                        help="Comma-separated tools to target (e.g. claude,gemini)")
+                        help="Tools to target: comma-separated names, or 'all' (e.g. claude,gemini)")
 
     # add
     p_add = _cmd(sub, "add", "Install a component")
