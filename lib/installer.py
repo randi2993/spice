@@ -76,8 +76,11 @@ def cmd_init(args):
 
     print("[spice] Initializing .agent/ ...")
     _copy_core()
-    _create_root_entrypoints()
     _init_manifest()
+
+    tools = _choose_tools(args, assume_yes)
+    prof.save(AGENT_DIR, prof.build(prof.available().get("default", "standard"), tools))
+    _create_root_entrypoints(tools)
 
     # Install suggested profile
     if assume_yes:
@@ -106,6 +109,41 @@ def cmd_init(args):
             _run_onboarding()
 
     print("\n[spice] Done. Open Claude Code (or your CLI of choice) in this project.")
+
+
+def _choose_tools(args, assume_yes: bool) -> list[str]:
+    """Which LLM tools this project targets.
+
+    Asked, not detected: a CLI can be installed without being on PATH — Claude
+    Code usually is — so detection would confidently produce the wrong answer.
+    """
+    catalog = prof.known_tools()
+    explicit = getattr(args, "tools", None)
+    if explicit:
+        chosen = [t.strip() for t in explicit.split(",") if t.strip()]
+        unknown = [t for t in chosen if t not in catalog]
+        if unknown:
+            print(f"[spice] Unknown tool(s): {', '.join(unknown)}")
+            print(f"        Known: {', '.join(sorted(catalog))}")
+            sys.exit(1)
+        return chosen
+
+    default = prof.default_tools()
+    if assume_yes:
+        print(f"\n[spice] --yes: targeting {', '.join(default)}.")
+        return default
+
+    print("\n[spice] Which tools will work on this project?\n")
+    for key, spec in catalog.items():
+        enforcement = (f"adapter available" if spec.get("adapter")
+                       else "no adapter yet — rules only")
+        print(f"    {key:<10} {spec['name']:<14} ({enforcement})")
+    print(f"\n  Comma-separated [Enter for {', '.join(default)}]: ", end="", flush=True)
+    answer = input().strip()
+    if not answer:
+        return default
+    chosen = [t.strip() for t in answer.split(",") if t.strip() in catalog]
+    return chosen or default
 
 
 def _refresh_existing():
@@ -195,16 +233,31 @@ def _reinject_roster(manifest: dict) -> int:
     return count
 
 
-def _create_root_entrypoints():
-    content = "Read `.agent/RULES.md` and follow all instructions before executing any task.\n"
-    for fname in ("CLAUDE.md", "GEMINI.md"):
-        p = Path(fname)
+ENTRY_CONTENT = "Read `.agent/RULES.md` and follow all instructions before executing any task.\n"
+
+
+def _create_root_entrypoints(tools: list[str] | None = None):
+    """One entry point per targeted tool.
+
+    Both CLAUDE.md and GEMINI.md used to be created unconditionally while the
+    adapters that enforce them were opt-in — automatic on one layer, selective
+    on the other. A project now says which tools it targets and gets exactly
+    those files.
+    """
+    catalog = prof.known_tools()
+    if tools is None:
+        tools = prof.selected_tools(AGENT_DIR)
+    for key in tools:
+        spec = catalog.get(key)
+        if not spec:
+            print(f"  ! unknown tool '{key}', skipped")
+            continue
+        p = Path(spec["entry_point"])
         existing = p.read_text(encoding="utf-8") if p.exists() else ""
-        if existing.strip() == content.strip():
-            continue  # already correct
-        p.write_text(content, encoding="utf-8")
-        action = "updated" if existing else "created"
-        print(f"  {action}: {fname}")
+        if existing.strip() == ENTRY_CONTENT.strip():
+            continue
+        p.write_text(ENTRY_CONTENT, encoding="utf-8")
+        print(f"  {'updated' if existing else 'created'}: {spec['entry_point']}")
 
 
 def _init_manifest():
@@ -376,12 +429,14 @@ def cmd_profile(args):
         return
 
     if sub == "set":
+        # Carry the project's own choices across: changing the security profile
+        # must not silently reset which tools the project targets.
+        previous = prof.load(AGENT_DIR)
         try:
-            profile = prof.build(args.name)
+            profile = prof.build(args.name, prof.selected_tools(AGENT_DIR))
         except ValueError as e:
             print(f"[spice] {e}")
             sys.exit(1)
-        previous = prof.load(AGENT_DIR)
         if previous:
             profile["exceptions"] = previous.get("exceptions", [])
         prof.save(AGENT_DIR, profile)
@@ -414,34 +469,96 @@ def cmd_profile(args):
         print(f"    {line}")
 
 
-# Root entry point -> the adapter that enforces the profile for that tool.
-ENTRY_POINTS = {"CLAUDE.md": "claude", "GEMINI.md": "gemini"}
-
-
 def _coverage_lines() -> list[str]:
-    """Which tools are actually protected, and which only read the rules.
+    """Which targeted tools are protected, and which only read the rules.
 
     Every entry point delivers the full declarative layer — RULES.md, the
     roles, standards/perimeter.md. Only a tool with an adapter also gets
     enforcement. Stating that per tool keeps the gap visible instead of
     leaving it to be inferred from a list of installed adapters.
     """
+    catalog = prof.known_tools()
     installed = set(_installed_adapters())
     lines = []
-    for entry, adapter in sorted(ENTRY_POINTS.items()):
-        if not Path(entry).exists():
+    for key in prof.selected_tools(AGENT_DIR):
+        spec = catalog.get(key)
+        if not spec:
+            lines.append(f"{key:<12} unknown tool, not in the catalog")
             continue
-        if adapter in installed:
+        entry = spec["entry_point"]
+        adapter = spec.get("adapter")
+        if adapter and adapter in installed:
             lines.append(f"{entry:<12} enforced by adapters/{adapter}")
+        elif adapter:
+            lines.append(f"{entry:<12} rules only  (install adapters/{adapter})")
         else:
-            available = (TOOLKIT_ROOT / "adapters" / adapter).exists()
-            hint = (f"install adapters/{adapter}" if available
-                    else "no adapter exists yet for this tool")
-            lines.append(f"{entry:<12} rules only, nothing enforces them  ({hint})")
+            lines.append(f"{entry:<12} rules only, no adapter exists for "
+                         f"{spec['name']} yet")
     for adapter in sorted(installed):
-        if adapter not in ENTRY_POINTS.values():
-            lines.append(f"{'(' + adapter + ')':<12} adapter installed with no known entry point")
-    return lines or ["no root entry points found"]
+        if adapter not in {s.get("adapter") for s in catalog.values()}:
+            lines.append(f"{'(' + adapter + ')':<12} adapter installed for a tool "
+                         f"this project does not target")
+    return lines or ["no tools targeted"]
+
+
+def cmd_tools(args):
+    """Lists or changes which LLM tools this project targets."""
+    _require_agent_dir()
+    catalog = prof.known_tools()
+    sub = getattr(args, "tools_command", None) or "show"
+    selected = prof.selected_tools(AGENT_DIR)
+
+    if sub == "show":
+        print("[spice] Tools known to this toolkit:\n")
+        for key, spec in catalog.items():
+            marker = "*" if key in selected else " "
+            adapter = spec.get("adapter")
+            state = (f"adapter: {adapter}" if adapter else "no adapter yet")
+            print(f"  {marker} {key:<10} {spec['name']:<14} {spec['entry_point']:<12} ({state})")
+            if not adapter and spec.get("adapter_note") and key in selected:
+                print(f"      {spec['adapter_note']}")
+        print("\n  * = targeted by this project")
+        return
+
+    if args.name not in catalog:
+        print(f"[spice] Unknown tool '{args.name}'. Known: {', '.join(sorted(catalog))}")
+        sys.exit(1)
+
+    profile = prof.load_or_default(AGENT_DIR)
+    spec = catalog[args.name]
+
+    if sub == "add":
+        if args.name in selected:
+            print(f"[spice] '{args.name}' is already targeted.")
+            return
+        profile["tools"] = selected + [args.name]
+        prof.save(AGENT_DIR, profile)
+        _create_root_entrypoints([args.name])
+        adapter = spec.get("adapter")
+        if adapter and (TOOLKIT_ROOT / "adapters" / adapter).exists():
+            print(f"        Install its enforcement with 'spice add adapters/{adapter}'.")
+        else:
+            print(f"        No adapter exists for {spec['name']} yet: it reads the "
+                  f"rules with nothing enforcing them.")
+        return
+
+    if sub == "remove":
+        if args.name not in selected:
+            print(f"[spice] '{args.name}' is not targeted.")
+            return
+        entry = Path(spec["entry_point"])
+        if entry.exists() and not getattr(args, "yes", False):
+            print(f"Also delete {entry}? [y/N]: ", end="", flush=True)
+            if input().strip().lower() in ("y", "yes"):
+                entry.unlink()
+                print(f"[spice] Deleted {entry}.")
+        profile["tools"] = [t for t in selected if t != args.name]
+        prof.save(AGENT_DIR, profile)
+        adapter = spec.get("adapter")
+        if adapter and adapter in _installed_adapters():
+            print(f"        Its adapter is still installed. Remove it with "
+                  f"'spice remove adapters/{adapter}'.")
+        print(f"[spice] No longer targeting {spec['name']}.")
 
 
 def _format_flags(flags: dict) -> str:
@@ -1072,16 +1189,27 @@ def cmd_doctor(args):
     # full declarative layer. But it must be visible, or a project looks
     # uniformly protected when only one of its tools actually is.
     if profile:
-        for entry, adapter in sorted(ENTRY_POINTS.items()):
-            if Path(entry).exists() and adapter not in adapters:
-                warnings.append(f"{entry} exists but adapters/{adapter} is not "
-                                f"installed — that tool reads the rules with "
-                                f"nothing enforcing them")
+        catalog = prof.known_tools()
+        for key in prof.selected_tools(AGENT_DIR):
+            spec = catalog.get(key)
+            if not spec:
+                warnings.append(f"Project targets unknown tool '{key}'")
+                continue
+            if not Path(spec["entry_point"]).exists():
+                errors.append(f"Targets {spec['name']} but {spec['entry_point']} "
+                              f"is missing — run 'spice tools add {key}'")
+            adapter = spec.get("adapter")
+            if not adapter:
+                warnings.append(f"{spec['name']} reads the rules but no adapter "
+                                f"exists for it yet — nothing enforces them")
+            elif adapter not in adapters:
+                warnings.append(f"{spec['name']} reads the rules with nothing "
+                                f"enforcing them — install adapters/{adapter}")
 
-    # 10. Root entry points
-    for fname in ("CLAUDE.md", "GEMINI.md"):
-        if not Path(fname).exists():
-            warnings.append(f"Missing root entry point: {fname}")
+    # Entry points are checked above, against the tools the project targets.
+    # A fixed CLAUDE.md-and-GEMINI.md check used to live here and now
+    # contradicts that: a project that deliberately targets one tool would be
+    # told it is missing the other one's file.
 
     if not errors and not warnings:
         print("[spice] All checks passed.")

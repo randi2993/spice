@@ -1,0 +1,19 @@
+{
+  "_note": "Known LLM tools. A project selects which ones it targets; spice creates an entry point for each and installs its adapter when one exists. Selecting a tool with adapter: null gives it the rules with nothing enforcing them, which spice reports rather than hides.",
+
+  "default": ["claude"],
+
+  "tools": {
+    "claude": {
+      "name": "Claude Code",
+      "entry_point": "CLAUDE.md",
+      "adapter": "claude"
+    },
+    "gemini": {
+      "name": "Gemini CLI",
+      "entry_point": "GEMINI.md",
+      "adapter": null,
+      "adapter_note": "Not built yet. Two unknowns block it: where the project config file lives, and the schema of the pre-tool hook payload. Guessing either produces a config that looks like protection and provides none."
+    }
+  }
+}

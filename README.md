@@ -52,7 +52,7 @@ spice doctor                    # verifies everything is wired
 
 | Command | What it does |
 |---|---|
-| `spice init [--force] [--no-onboard] [--yes]` | Initialize `.agent/`. `--force` refreshes templates and **keeps** `memory/` and `project/`. |
+| `spice init [--force] [--no-onboard] [--yes] [--tools a,b]` | Initialize `.agent/`. `--force` refreshes templates and **keeps** `memory/` and `project/`. |
 | `spice add <component> [--from <path>]` | Install a component and its dependencies. |
 | `spice remove <component> [--yes]` | Uninstall a component. |
 | `spice list [--available]` | List installed components, or everything in the toolkit. |
@@ -63,6 +63,7 @@ spice doctor                    # verifies everything is wired
 | `spice doctor` | Verify `.agent/` integrity and the perimeter. |
 | `spice path [--open]` | Show which toolkit copy is running and where its data lives. |
 | `spice profile <show\|list\|set>` | Inspect or change the security profile. |
+| `spice tools <show\|add\|remove>` | Choose which LLM tools this project targets. |
 | `spice factory-reset [--yes]` | **Delete `.agent/` entirely.** Lists what will be lost first. |
 | `spice onboard` | Interactive project onboarding (auto-detects stack). |
 | `spice run-agent` | Execute a role with a specific model/provider via subprocess. |
@@ -85,11 +86,24 @@ and requires typing `reset` to confirm.
 
 ## What `spice init` creates
 
-At the **project root**:
+At the **project root**, one entry point per tool the project targets:
 ```
 CLAUDE.md             # Entry point for Claude Code → reads .agent/RULES.md
-GEMINI.md             # Entry point for Gemini CLI → reads .agent/RULES.md
 ```
+
+`spice init` asks which tools will work on the project; `--tools claude,gemini`
+answers it up front. Both files used to be created unconditionally while the
+adapters that enforce them were opt-in — automatic on one layer, selective on
+the other.
+
+```bash
+spice tools                  # known tools, and which this project targets
+spice tools add gemini       # target it and create GEMINI.md
+spice tools remove gemini
+```
+
+Targeting a tool with no adapter is legitimate: it gets the full declarative
+layer and nothing enforcing it, which `doctor` reports rather than hides.
 
 Inside `.agent/`:
 ```
@@ -156,6 +170,12 @@ not require `capabilities.shell` — those are separate tools, so disabling the
 shell removes command execution without affecting normal editing.
 
 ### Adapters
+
+Only `claude` exists today. `gemini` is declared in `tools.json` with no
+adapter: two unknowns block it — where Gemini's project config file lives, and
+the schema of its pre-tool hook payload. Guessing either would produce a config
+that looks like protection and provides none, so it stays unbuilt and the gap
+stays visible.
 
 `adapters/claude` renders `.claude/settings.json` and installs
 `.agent/hooks/guard-paths.js`, a `PreToolUse` guard that denies any path

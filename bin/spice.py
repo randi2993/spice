@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from installer import (
     cmd_init, cmd_add, cmd_remove, cmd_list, cmd_update, cmd_doctor,
     cmd_onboard, cmd_run_agent, cmd_providers, cmd_search, cmd_path,
-    cmd_factory_reset, cmd_profile, cmd_suggest, cmd_self_update
+    cmd_factory_reset, cmd_profile, cmd_suggest, cmd_self_update, cmd_tools
 )
 
 MIN_PYTHON = (3, 10)
@@ -68,6 +68,8 @@ def build_parser():
     p_init.add_argument("--no-onboard", action="store_true", help="Skip interactive onboarding")
     p_init.add_argument("--yes", "-y", action="store_true",
                         help="Accept the suggested profile and skip all prompts")
+    p_init.add_argument("--tools",
+                        help="Comma-separated tools to target (e.g. claude,gemini)")
 
     # add
     p_add = _cmd(sub, "add", "Install a component")
@@ -123,6 +125,16 @@ def build_parser():
     profile_sub.add_parser("list", help="List available profiles")
     p_profile_set = profile_sub.add_parser("set", help="Change profile and re-render adapters")
     p_profile_set.add_argument("name", help="Profile name (e.g. strict, standard, open)")
+
+    # tools
+    p_tools = _cmd(sub, "tools", "Show or change which LLM tools this project targets")
+    tools_sub = p_tools.add_subparsers(dest="tools_command", metavar="<subcommand>")
+    tools_sub.add_parser("show", help="List known tools and which are targeted")
+    p_tools_add = tools_sub.add_parser("add", help="Target a tool and create its entry point")
+    p_tools_add.add_argument("name", help="Tool key (e.g. gemini)")
+    p_tools_rm = tools_sub.add_parser("remove", help="Stop targeting a tool")
+    p_tools_rm.add_argument("name", help="Tool key")
+    p_tools_rm.add_argument("--yes", action="store_true", help="Delete the entry point without asking")
 
     # factory-reset
     p_reset = _cmd(sub, "factory-reset", "Delete .agent/ entirely and start over")
@@ -258,6 +270,7 @@ def main():
         "doctor":        lambda: cmd_doctor(args),
         "path":          lambda: cmd_path(args),
         "profile":       lambda: cmd_profile(args),
+        "tools":         lambda: cmd_tools(args),
         "factory-reset": lambda: cmd_factory_reset(args),
         "onboard":       lambda: cmd_onboard(args),
         "run-agent":     lambda: cmd_run_agent(args),

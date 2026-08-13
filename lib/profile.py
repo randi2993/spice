@@ -27,7 +27,7 @@ def available() -> dict:
         return json.load(f)
 
 
-def build(name: str) -> dict:
+def build(name: str, tools: list[str] | None = None) -> dict:
     catalog = available()
     if name not in catalog.get("profiles", {}):
         raise ValueError(f"Unknown profile '{name}'. "
@@ -35,10 +35,38 @@ def build(name: str) -> dict:
     spec = catalog["profiles"][name]
     return {
         "profile": name,
+        "tools": list(tools if tools is not None else default_tools()),
         "perimeter": dict(spec.get("perimeter", {})),
         "capabilities": dict(spec.get("capabilities", {})),
         "exceptions": [],
     }
+
+
+# ── tool catalog ─────────────────────────────────────────────────────────────
+
+def tools_catalog() -> dict:
+    """Known LLM tools: entry point file and the adapter that enforces it."""
+    path = TOOLKIT_ROOT / "tools.json"
+    if not path.exists():
+        return {"default": [], "tools": {}}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def known_tools() -> dict:
+    return tools_catalog().get("tools", {})
+
+
+def default_tools() -> list[str]:
+    return list(tools_catalog().get("default", []))
+
+
+def selected_tools(agent_dir: Path) -> list[str]:
+    """Tools this project targets. Falls back to the catalog default."""
+    profile = load(agent_dir)
+    if profile and "tools" in profile:
+        return list(profile["tools"])
+    return default_tools()
 
 
 # ── project profile ──────────────────────────────────────────────────────────
