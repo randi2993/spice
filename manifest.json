@@ -5,22 +5,22 @@
   "python_requires": ">=3.10",
   "components": {
     "roles": [
-      { "name": "analyst",     "version": "1.0.0", "tier": "heavy",    "suggested": false },
-      { "name": "architect",   "version": "1.0.0", "tier": "heavy",    "suggested": false },
-      { "name": "implementer", "version": "1.0.0", "tier": "standard", "suggested": true  },
-      { "name": "qa",          "version": "1.0.0", "tier": "standard", "suggested": true  },
-      { "name": "release",     "version": "1.0.0", "tier": "light",    "suggested": true  },
-      { "name": "security",    "version": "1.0.0", "tier": "standard", "suggested": false },
-      { "name": "documenter",  "version": "1.0.0", "tier": "light",    "suggested": false },
-      { "name": "refactor",    "version": "1.0.0", "tier": "standard", "suggested": false },
-      { "name": "reporter",    "version": "1.0.0", "tier": "light",    "suggested": false }
+      { "name": "analyst",     "version": "1.1.0", "tier": "heavy",    "phase": "analysis",  "suggested": false },
+      { "name": "architect",   "version": "1.1.0", "tier": "heavy",    "phase": "design",    "suggested": false },
+      { "name": "implementer", "version": "1.1.0", "tier": "standard", "phase": "build",     "suggested": true  },
+      { "name": "qa",          "version": "1.1.0", "tier": "standard", "phase": "verify",    "suggested": true  },
+      { "name": "release",     "version": "1.1.0", "tier": "light",    "phase": "release",   "suggested": true  },
+      { "name": "security",    "version": "1.1.0", "tier": "standard", "phase": "security",  "suggested": false },
+      { "name": "documenter",  "version": "1.1.0", "tier": "light",    "phase": "document",  "suggested": false },
+      { "name": "refactor",    "version": "1.1.0", "tier": "standard", "phase": "on-demand", "suggested": false },
+      { "name": "reporter",    "version": "1.1.0", "tier": "light",    "phase": "on-demand", "suggested": false }
     ],
     "playbooks": [
       { "name": "git",         "version": "1.0.0", "suggested": true  }
     ],
     "standards": [
       { "name": "done",          "version": "1.0.0", "suggested": true  },
-      { "name": "handoff",       "version": "1.0.0", "suggested": true  },
+      { "name": "handoff",       "version": "1.1.0", "suggested": true  },
       { "name": "hitl",          "version": "1.0.0", "suggested": true  },
       { "name": "orchestration", "version": "1.0.0", "suggested": true  },
       { "name": "workflow",      "version": "1.0.0", "suggested": true  }

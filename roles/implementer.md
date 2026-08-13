@@ -1,7 +1,8 @@
 ---
 name: implementer
-version: 1.0.0
+version: 1.1.0
 tier: standard
+phase: build
 description: Executes the approved plan; halts and consults on anything outside scope.
 triggers:
   - "implement"

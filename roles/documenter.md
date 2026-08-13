@@ -1,7 +1,8 @@
 ---
 name: documenter
-version: 1.0.0
+version: 1.1.0
 tier: light
+phase: document
 description: Keeps documentation up to date with only what changed.
 triggers:
   - "report changes"

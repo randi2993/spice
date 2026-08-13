@@ -36,11 +36,17 @@ Workflow plan:
   2. <role> — ...
 ```
 
-Workflow per classification:
-- **Trivial** → Release only.
-- **Minor** → Implementer → QA → Release.
-- **Major** → Analyst → Architect → (wait for approval) → Implementer → QA + Security → Documenter → Release.
-- **Structural** → Same as Major + explicit approval at EACH phase.
+Workflow per classification — generated from the roles actually installed:
+
+<!-- SPICE:WORKFLOWS:START -->
+<!-- managed by spice. do not edit manually. -->
+<!-- SPICE:WORKFLOWS:END -->
+
+**Structural** additionally requires explicit approval at EACH phase, not only
+after design.
+
+If a level shows no role, do not substitute another one: ask the user which role
+applies, or whether to install the missing one.
 
 ### Step C — Wait for approval (Major / Structural only)
 
@@ -126,8 +132,10 @@ Scan the user message against the **Triggers** declared for each installed role 
   > - <role-a>: <description>
   > - <role-b>: <description>
   >
-  > Or run them combined (reporter consolidates outputs).
   > Which do you prefer?"
+
+  Only offer to run them combined if `reporter` appears in the installed roles
+  below. It is an optional role, so most projects do not have it.
 - **No role matches** → ask the user which role applies before doing anything.
 
 If the request contains generic words like "report", "reporte", "tests", "pruebas" that appear in multiple triggers, ALWAYS ask the user. Do not guess.

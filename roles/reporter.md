@@ -1,7 +1,8 @@
 ---
 name: reporter
-version: 1.0.0
+version: 1.1.0
 tier: light
+phase: on-demand
 description: Consolidates outputs from multiple roles into a single executive report.
 triggers:
   - "combined report"

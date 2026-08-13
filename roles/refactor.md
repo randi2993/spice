@@ -1,7 +1,8 @@
 ---
 name: refactor
-version: 1.0.0
+version: 1.1.0
 tier: standard
+phase: on-demand
 description: Detects technical debt and proposes cleanup; only on explicit demand.
 triggers:
   - "refactor"

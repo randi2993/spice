@@ -1,7 +1,8 @@
 ---
 name: analyst
-version: 1.0.0
+version: 1.1.0
 tier: heavy
+phase: analysis
 description: First contact with the request; classifies change and produces initial plan.
 triggers:
   - "analyze request"

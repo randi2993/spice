@@ -1,7 +1,8 @@
 ---
 name: architect
-version: 1.0.0
+version: 1.1.0
 tier: heavy
+phase: design
 description: Validates plans against architecture.md; does not write code.
 triggers:
   - "review architecture"

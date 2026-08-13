@@ -132,6 +132,27 @@ def _copy_core(preserve_user_data: bool = False):
             shutil.copy2(item, dest)
 
 
+def _installed_phases() -> dict[str, list[str]]:
+    """phase -> installed role names, read from the role files in the project."""
+    phases: dict[str, list[str]] = {}
+    roles_dir = AGENT_DIR / "roles"
+    if not roles_dir.exists():
+        return phases
+    for role_file in sorted(roles_dir.glob("*.md")):
+        phase = dr.get_frontmatter(role_file).get("phase")
+        if not phase or phase == re_mod.ON_DEMAND:
+            continue
+        phases.setdefault(str(phase), []).append(role_file.stem)
+    return phases
+
+
+def _regenerate_workflows() -> None:
+    """Rewrites the workflow block so it can only name installed roles."""
+    rules_path = AGENT_DIR / "RULES.md"
+    body = re_mod.render_workflows(_installed_phases())
+    re_mod.set_block(rules_path, re_mod.WORKFLOWS_MARKER, body)
+
+
 def _reinject_roster(manifest: dict) -> int:
     """Rebuilds the SPICE:ROLES / SPICE:SKILLS blocks from the manifest."""
     rules_path = AGENT_DIR / "RULES.md"
@@ -155,6 +176,7 @@ def _reinject_roster(manifest: dict) -> int:
             if directive:
                 re_mod.inject_skill(rules_path, name, entry["version"], directive)
                 count += 1
+    _regenerate_workflows()
     return count
 
 
@@ -238,7 +260,7 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
         if directive:
             re_mod.inject_skill(rules_path, name, version, directive)
             if not quiet:
-                print(f"    → directive injected into RULES.md")
+                print(f"    -> directive injected into RULES.md")
     elif ctype == "roles":
         description = fm.get("description", "")
         tier_str = tier or "standard"
@@ -246,9 +268,10 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
         if isinstance(triggers, str):
             triggers = [triggers]
         re_mod.inject_role(rules_path, name, version, tier_str, description, triggers)
+        _regenerate_workflows()
         if not quiet:
             trig_info = f", {len(triggers)} triggers" if triggers else ""
-            print(f"    → role registered in RULES.md (tier: {tier_str}{trig_info})")
+            print(f"    -> role registered in RULES.md (tier: {tier_str}{trig_info})")
 
     deps = dr.get_depends_on(src)
     mf.record(manifest, ctype, name, version, deps, tier=tier)
@@ -296,6 +319,9 @@ def cmd_remove(args):
             re_mod.remove_skill(rules_path, name)
         elif ctype == "roles":
             re_mod.remove_role(rules_path, name)
+            # Workflows are derived from the roster, so uninstalling a role
+            # removes it from the flows instead of leaving a dangling name.
+            _regenerate_workflows()
 
     mf.remove_record(manifest, ctype, name)
     mf.save(AGENT_DIR, manifest)
@@ -728,6 +754,25 @@ def cmd_doctor(args):
     if not any(e["type"] == "roles" for e in components.values()):
         warnings.append("No roles installed — the RULES.md execution protocol "
                         "requires adopting roles it cannot find")
+    else:
+        phase_roles = _installed_phases()
+        for role_file in sorted((AGENT_DIR / "roles").glob("*.md")):
+            phase = dr.get_frontmatter(role_file).get("phase")
+            if not phase:
+                warnings.append(f"Role {role_file.stem} has no 'phase' in "
+                                f"frontmatter and cannot appear in any workflow")
+            elif phase not in re_mod.KNOWN_PHASES:
+                errors.append(f"Role {role_file.stem}: unknown phase '{phase}'. "
+                              f"Must be one of {', '.join(sorted(re_mod.KNOWN_PHASES))}")
+        for level in re_mod.uncovered_classifications(phase_roles):
+            warnings.append(f"Classification '{level}' has no installed role to "
+                            f"serve it")
+
+    if rules_path.exists():
+        content = rules_path.read_text(encoding="utf-8", errors="replace")
+        if "SPICE:WORKFLOWS:START" not in content:
+            warnings.append("RULES.md predates generated workflows — run "
+                            "'spice update --refresh-core'")
 
     # 9. Root entry points
     for fname in ("CLAUDE.md", "GEMINI.md"):

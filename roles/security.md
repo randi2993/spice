@@ -1,7 +1,8 @@
 ---
 name: security
-version: 1.0.0
+version: 1.1.0
 tier: standard
+phase: security
 description: Reviews security risks in the diff; does not write new code.
 triggers:
   - "audit"
