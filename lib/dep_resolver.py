@@ -10,9 +10,13 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _LIST_ITEM_RE   = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
 
 
+DIR_MANIFESTS = ("SKILL.md", "ADAPTER.md")
+
+
 def get_frontmatter(component_path: Path) -> dict:
     if component_path.is_dir():
-        md = component_path / "SKILL.md"
+        md = next((component_path / n for n in DIR_MANIFESTS
+                   if (component_path / n).exists()), component_path / DIR_MANIFESTS[0])
     else:
         md = component_path
     if not md.exists():
@@ -74,7 +78,7 @@ def resolve_install_order(
 
 
 def find_component(toolkit_root: Path, name: str) -> Optional[tuple[str, str]]:
-    for ctype in ("skills", "roles", "playbooks", "standards"):
+    for ctype in ("skills", "adapters", "roles", "playbooks", "standards"):
         if _resolve_path(toolkit_root, ctype, name).exists():
             return (ctype, name)
     return None

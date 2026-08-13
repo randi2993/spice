@@ -14,12 +14,18 @@ import manifest as mf
 import rules_editor as re_mod
 import dep_resolver as dr
 import providers as prov
+import profile as prof
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 AGENT_DIR    = Path(".agent")
 
 # Directories inside .agent/ owned by the user, never overwritten by a refresh.
 USER_OWNED = ("memory", "project")
+
+COMPONENT_TYPES = ("roles", "playbooks", "standards", "skills", "adapters")
+
+# Component types stored as a directory rather than a single .md file.
+DIR_COMPONENTS = ("skills", "adapters")
 
 
 def _color(text: str, *codes: str) -> str:
@@ -42,6 +48,7 @@ SUGGESTED_PROFILE = [
     ("standards", "hitl"),
     ("standards", "orchestration"),
     ("standards", "workflow"),
+    ("standards", "perimeter"),
 ]
 
 
@@ -273,6 +280,12 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
             trig_info = f", {len(triggers)} triggers" if triggers else ""
             print(f"    -> role registered in RULES.md (tier: {tier_str}{trig_info})")
 
+    elif ctype == "adapters":
+        _install_shared_hooks()
+        applied = _render_adapter(name)
+        if applied and not quiet:
+            print(f"    -> rendered {applied}")
+
     deps = dr.get_depends_on(src)
     mf.record(manifest, ctype, name, version, deps, tier=tier)
 
@@ -326,6 +339,105 @@ def cmd_remove(args):
     mf.remove_record(manifest, ctype, name)
     mf.save(AGENT_DIR, manifest)
     print(f"[spice] Removed {ctype}/{name}.")
+
+
+# ── profile & adapters ───────────────────────────────────────────────────────
+
+def cmd_profile(args):
+    _require_agent_dir()
+    sub = getattr(args, "profile_command", None) or "show"
+
+    if sub == "list":
+        catalog = prof.available()
+        active = (prof.load(AGENT_DIR) or {}).get("profile")
+        print("[spice] Available profiles:\n")
+        for name, spec in catalog.get("profiles", {}).items():
+            marker = "*" if name == active else " "
+            print(f"  {marker} {name:<10} {spec.get('description', '')}")
+        print("\n  * = active in this project")
+        return
+
+    if sub == "set":
+        try:
+            profile = prof.build(args.name)
+        except ValueError as e:
+            print(f"[spice] {e}")
+            sys.exit(1)
+        previous = prof.load(AGENT_DIR)
+        if previous:
+            profile["exceptions"] = previous.get("exceptions", [])
+        prof.save(AGENT_DIR, profile)
+        print(f"[spice] Profile set to '{args.name}'.")
+        rendered = _render_all_adapters()
+        if rendered:
+            for target in rendered:
+                print(f"  -> re-rendered {target}")
+        else:
+            print("  ! No adapters installed, so nothing enforces this profile.")
+            print("    Install one with 'spice add adapters/claude'.")
+        return
+
+    # show
+    profile = prof.load(AGENT_DIR)
+    if not profile:
+        default = prof.available().get("default", "standard")
+        print(f"[spice] No profile set. Commands behave as '{default}' would "
+              f"describe, but nothing enforces it.")
+        print(f"        Set one with 'spice profile set <name>'.")
+        return
+    print(f"  profile:     {profile.get('profile')}")
+    print(f"  perimeter:   {_format_flags(profile.get('perimeter', {}))}")
+    print(f"  capabilities:{_format_flags(profile.get('capabilities', {}))}")
+    adapters = sorted(_installed_adapters())
+    print(f"  adapters:    {', '.join(adapters) if adapters else '(none — nothing enforces this)'}")
+    for exception in profile.get("exceptions", []):
+        print(f"  exception:   {exception}")
+
+
+def _format_flags(flags: dict) -> str:
+    if not flags:
+        return " (none)"
+    return " " + ", ".join(f"{k}={'yes' if v else 'no'}" if isinstance(v, bool)
+                           else f"{k}={v}" for k, v in flags.items())
+
+
+def _installed_adapters() -> list[str]:
+    base = AGENT_DIR / "adapters"
+    if not base.exists():
+        return []
+    return [d.name for d in base.iterdir() if (d / "mapping.json").exists()]
+
+
+def _install_shared_hooks() -> None:
+    src = TOOLKIT_ROOT / "adapters" / "_shared" / "hooks"
+    if not src.exists():
+        return
+    dest = AGENT_DIR / "hooks"
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.is_file():
+            shutil.copy2(item, dest / item.name)
+
+
+def _render_adapter(name: str) -> str | None:
+    mapping_path = AGENT_DIR / "adapters" / name / "mapping.json"
+    if not mapping_path.exists():
+        return None
+    with open(mapping_path, encoding="utf-8") as f:
+        mapping = json.load(f)
+    profile = prof.load_or_default(AGENT_DIR)
+    target = Path(mapping["target"])
+    try:
+        prof.apply_to_file(target, prof.render(profile, mapping),
+                           prof.owned_shape(mapping))
+    except ValueError as e:
+        print(f"[spice] {e}")
+        return None
+    return mapping["target"]
+
+
+def _render_all_adapters() -> list[str]:
+    return [t for t in (_render_adapter(n) for n in _installed_adapters()) if t]
 
 
 # ── factory-reset ────────────────────────────────────────────────────────────
@@ -454,7 +566,7 @@ def _list_installed():
         by_type.setdefault(entry["type"], []).append(entry)
 
     print(f"[spice] Toolkit v{manifest.get('toolkit_version', '?')}  (installed components)\n")
-    for ctype in ("roles", "playbooks", "standards", "skills"):
+    for ctype in COMPONENT_TYPES:
         if ctype not in by_type:
             continue
         print(f"  {ctype.upper()}")
@@ -477,7 +589,7 @@ def _list_available():
     print("[spice] Available components in toolkit:")
     print("        [✓] = installed in current project\n")
 
-    for ctype in ("roles", "playbooks", "standards", "skills"):
+    for ctype in COMPONENT_TYPES:
         components = _discover_components(ctype)
         if not components:
             continue
@@ -505,7 +617,7 @@ def cmd_search(args):
         installed_keys = set(manifest.get("components", {}).keys())
 
     found = False
-    for ctype in ("roles", "playbooks", "standards", "skills"):
+    for ctype in COMPONENT_TYPES:
         components = _discover_components(ctype)
         matches = []
         for name, fm in components:
@@ -536,12 +648,11 @@ def _discover_components(ctype: str) -> list[tuple[str, dict]]:
     if not base.exists():
         return []
     result = []
-    if ctype == "skills":
-        # Skills are folders with SKILL.md
+    if ctype in DIR_COMPONENTS:
+        manifest_name = "SKILL.md" if ctype == "skills" else "ADAPTER.md"
         for d in sorted(base.iterdir()):
-            if d.is_dir() and (d / "SKILL.md").exists():
-                fm = dr.get_frontmatter(d / "SKILL.md")
-                result.append((d.name, fm))
+            if d.is_dir() and (d / manifest_name).exists():
+                result.append((d.name, dr.get_frontmatter(d / manifest_name)))
     else:
         # roles, playbooks, standards are .md files
         for f in sorted(base.glob("*.md")):
@@ -676,9 +787,6 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
 
 # ── doctor ───────────────────────────────────────────────────────────────────
 
-COMPONENT_TYPES = ("roles", "playbooks", "standards", "skills")
-
-
 def cmd_doctor(args):
     _require_agent_dir()
     errors: list[str] = []
@@ -774,7 +882,20 @@ def cmd_doctor(args):
             warnings.append("RULES.md predates generated workflows — run "
                             "'spice update --refresh-core'")
 
-    # 9. Root entry points
+    # 9. Perimeter. A guard that is declared but not actually wired is worse
+    #    than none: it produces confidence without protection.
+    adapters = _installed_adapters()
+    profile = prof.load(AGENT_DIR)
+    if profile and not adapters:
+        warnings.append(f"Profile '{profile.get('profile')}' is declared but no "
+                        f"adapter is installed, so nothing enforces it")
+    if adapters and not profile:
+        warnings.append("Adapters installed but no profile set — they rendered "
+                        "the default. Run 'spice profile set <name>'")
+    for name in adapters:
+        errors.extend(_adapter_errors(name))
+
+    # 10. Root entry points
     for fname in ("CLAUDE.md", "GEMINI.md"):
         if not Path(fname).exists():
             warnings.append(f"Missing root entry point: {fname}")
@@ -794,15 +915,51 @@ def cmd_doctor(args):
         sys.exit(1)
 
 
+def _adapter_errors(name: str) -> list[str]:
+    """Checks the adapter is actually wired, not merely present."""
+    out = []
+    mapping_path = AGENT_DIR / "adapters" / name / "mapping.json"
+    if not mapping_path.exists():
+        return [f"Adapter {name} has no mapping.json"]
+    with open(mapping_path, encoding="utf-8") as f:
+        mapping = json.load(f)
+
+    target = Path(mapping["target"])
+    if not target.exists():
+        return [f"Adapter {name} declares {mapping['target']} but the file is "
+                f"missing — run 'spice profile set <name>' to render it"]
+
+    try:
+        with open(target, encoding="utf-8") as f:
+            actual = json.load(f)
+    except json.JSONDecodeError:
+        return [f"{mapping['target']} is not valid JSON"]
+
+    expected = prof.render(prof.load_or_default(AGENT_DIR), mapping)
+    for key in expected:
+        if key not in actual:
+            out.append(f"{mapping['target']} is missing '{key}', which the "
+                       f"active profile requires — re-run 'spice profile set'")
+
+    required = mapping.get("requires_command")
+    if required and not shutil.which(required):
+        out.append(f"Adapter {name} needs '{required}' on PATH; the perimeter "
+                   f"hook cannot run without it")
+
+    hook = AGENT_DIR / "hooks" / "guard-paths.js"
+    if not hook.exists():
+        out.append("Perimeter hook .agent/hooks/guard-paths.js is missing")
+    return out
+
+
 def _components_on_disk() -> set[str]:
     found = set()
     for ctype in COMPONENT_TYPES:
         base = AGENT_DIR / ctype
         if not base.exists():
             continue
-        if ctype == "skills":
-            found |= {f"skills/{d.name}" for d in base.iterdir()
-                      if d.is_dir() and (d / "SKILL.md").exists()}
+        if ctype in DIR_COMPONENTS:
+            found |= {f"{ctype}/{d.name}" for d in base.iterdir() if d.is_dir()}
         else:
             found |= {f"{ctype}/{f.stem}" for f in base.glob("*.md")}
     return found
@@ -1192,7 +1349,7 @@ def _toolkit_component_path(ctype: str, name: str) -> Path:
 
 
 def _agent_component_dest(ctype: str, name: str) -> Path:
-    if ctype == "skills":
+    if ctype in DIR_COMPONENTS:
         return AGENT_DIR / ctype / name
     return AGENT_DIR / ctype / f"{name}.md"
 
@@ -1200,9 +1357,11 @@ def _agent_component_dest(ctype: str, name: str) -> Path:
 def _infer_type_from_path(src: Path) -> tuple[str, str]:
     name = src.stem if src.is_file() else src.name
     parent = src.parent.name
-    if parent in ("roles", "playbooks", "standards", "skills"):
+    if parent in COMPONENT_TYPES:
         return parent, name
     if (src / "SKILL.md").exists():
         return "skills", name
+    if (src / "ADAPTER.md").exists():
+        return "adapters", name
     print(f"[spice] Could not infer type from '{src}'. Use 'type/name'.")
     sys.exit(1)

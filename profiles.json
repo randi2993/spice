@@ -1,0 +1,35 @@
+{
+  "default": "standard",
+  "profiles": {
+    "strict": {
+      "description": "No shell, no network, no subagents. Reads and writes confined to the project.",
+      "perimeter": { "confine_to_project": true, "cover_reads": true },
+      "capabilities": {
+        "shell": false,
+        "network": false,
+        "subagents": false,
+        "background_jobs": false
+      }
+    },
+    "standard": {
+      "description": "Shell and subagents allowed, no network. Reads and writes confined to the project.",
+      "perimeter": { "confine_to_project": true, "cover_reads": true },
+      "capabilities": {
+        "shell": true,
+        "network": false,
+        "subagents": true,
+        "background_jobs": false
+      }
+    },
+    "open": {
+      "description": "Everything allowed. Only writes are confined to the project.",
+      "perimeter": { "confine_to_project": true, "cover_reads": false },
+      "capabilities": {
+        "shell": true,
+        "network": true,
+        "subagents": true,
+        "background_jobs": true
+      }
+    }
+  }
+}

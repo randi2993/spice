@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from installer import (
     cmd_init, cmd_add, cmd_remove, cmd_list, cmd_update, cmd_doctor,
     cmd_onboard, cmd_run_agent, cmd_providers, cmd_search, cmd_path,
-    cmd_factory_reset
+    cmd_factory_reset, cmd_profile
 )
 
 MIN_PYTHON = (3, 10)
@@ -108,6 +108,14 @@ def build_parser():
     p_path.add_argument("--open", action="store_true",
                         help="Open the toolkit directory in the file manager")
 
+    # profile
+    p_profile = _cmd(sub, "profile", "Show or change the security profile")
+    profile_sub = p_profile.add_subparsers(dest="profile_command", metavar="<subcommand>")
+    profile_sub.add_parser("show", help="Show the active profile and what enforces it")
+    profile_sub.add_parser("list", help="List available profiles")
+    p_profile_set = profile_sub.add_parser("set", help="Change profile and re-render adapters")
+    p_profile_set.add_argument("name", help="Profile name (e.g. strict, standard, open)")
+
     # factory-reset
     p_reset = _cmd(sub, "factory-reset", "Delete .agent/ entirely and start over")
     p_reset.add_argument("--yes", action="store_true", help="Skip the typed confirmation")
@@ -198,6 +206,7 @@ def main():
         "update":        lambda: cmd_update(args),
         "doctor":        lambda: cmd_doctor(args),
         "path":          lambda: cmd_path(args),
+        "profile":       lambda: cmd_profile(args),
         "factory-reset": lambda: cmd_factory_reset(args),
         "onboard":       lambda: cmd_onboard(args),
         "run-agent":     lambda: cmd_run_agent(args),

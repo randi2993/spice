@@ -1,0 +1,71 @@
+{
+  "target": ".claude/settings.json",
+  "requires_command": "node",
+
+  "base": {
+    "autoMemoryEnabled": false,
+    "autoDreamEnabled": false,
+    "plansDirectory": ".agent/memory/plans",
+    "permissions": {
+      "deny": [
+        "Write(.claude/**)",
+        "Edit(.claude/**)",
+        "Write(.agent/hooks/**)",
+        "Edit(.agent/hooks/**)"
+      ]
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Write|Edit|NotebookEdit",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node .agent/hooks/guard-paths.js",
+              "statusMessage": "Checking project perimeter..."
+            }
+          ]
+        }
+      ]
+    }
+  },
+
+  "when": {
+    "perimeter.cover_reads=true": {
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Write|Edit|NotebookEdit|Read|Glob|Grep",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node .agent/hooks/guard-paths.js",
+                "statusMessage": "Checking project perimeter..."
+              }
+            ]
+          }
+        ]
+      }
+    },
+
+    "capabilities.shell=false": {
+      "permissions": { "deny": ["Bash", "PowerShell"] }
+    },
+
+    "capabilities.network=false": {
+      "permissions": { "deny": ["WebFetch", "WebSearch"] },
+      "disableArtifact": true,
+      "disableClaudeAiConnectors": true,
+      "autoUploadSessions": false,
+      "remoteControlAtStartup": false
+    },
+
+    "capabilities.subagents=false": {
+      "permissions": { "deny": ["Agent"] }
+    },
+
+    "capabilities.background_jobs=false": {
+      "permissions": { "deny": ["CronCreate", "CronDelete", "CronList", "Monitor"] }
+    }
+  }
+}
