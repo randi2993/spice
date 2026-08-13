@@ -36,24 +36,40 @@ def resolve_install_order(
     toolkit_root: Path,
     component_type: str,
     name: str,
-    visited: Optional[set] = None,
+    _in_progress: Optional[list] = None,
+    _resolved: Optional[set] = None,
 ) -> list[tuple[str, str]]:
-    if visited is None:
-        visited = set()
-    key = f"{component_type}/{name}"
-    if key in visited:
-        raise ValueError(f"Circular dependency detected: {key}")
-    visited.add(key)
+    """Returns dependencies before dependents.
 
+    Cycle detection uses `_in_progress` (the current branch only), while
+    `_resolved` deduplicates. Using a single set for both reports a diamond
+    (A->B, A->C, B->D, C->D) as a cycle, which it is not.
+    """
+    if _in_progress is None:
+        _in_progress = []
+    if _resolved is None:
+        _resolved = set()
+
+    key = f"{component_type}/{name}"
+    if key in _in_progress:
+        cycle = " -> ".join(_in_progress + [key])
+        raise ValueError(f"Circular dependency detected: {cycle}")
+    if key in _resolved:
+        return []
+
+    _in_progress.append(key)
     component_path = _resolve_path(toolkit_root, component_type, name)
     result = []
     for dep in get_depends_on(component_path):
         dep_type, dep_name = _split_key(dep)
-        for item in resolve_install_order(toolkit_root, dep_type, dep_name, visited):
+        for item in resolve_install_order(toolkit_root, dep_type, dep_name,
+                                          _in_progress, _resolved):
             if item not in result:
                 result.append(item)
-    if (component_type, name) not in result:
-        result.append((component_type, name))
+    _in_progress.pop()
+    _resolved.add(key)
+
+    result.append((component_type, name))
     return result
 
 
@@ -83,8 +99,22 @@ def _split_key(key: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def _parse_inline_list(value: str) -> list[str]:
+    """Parses `[a, b, c]` into a list. Commas inside quotes are not supported."""
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return [_unquote(item.strip()) for item in inner.split(",") if item.strip()]
+
+
 def _parse_yaml_simple(yaml_text: str) -> dict:
-    """Minimal YAML parser: key: value and lists with dashes."""
+    """Minimal YAML parser: `key: value`, `key: [a, b]`, and lists with dashes."""
     result = {}
     current_key = None
     list_items = []
@@ -93,11 +123,7 @@ def _parse_yaml_simple(yaml_text: str) -> dict:
         if not stripped or stripped.startswith("#"):
             continue
         if stripped.startswith("- ") and current_key:
-            item = stripped[2:].strip()
-            # Strip surrounding quotes
-            if len(item) >= 2 and item[0] == item[-1] and item[0] in ('"', "'"):
-                item = item[1:-1]
-            list_items.append(item)
+            list_items.append(_unquote(stripped[2:].strip()))
             continue
         if ":" in stripped:
             if current_key and list_items:
@@ -107,10 +133,10 @@ def _parse_yaml_simple(yaml_text: str) -> dict:
             key = key.strip()
             val = val.strip()
             if val:
-                # Strip surrounding quotes from scalar values too
-                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-                    val = val[1:-1]
-                result[key] = val
+                if val.startswith("[") and val.endswith("]"):
+                    result[key] = _parse_inline_list(val)
+                else:
+                    result[key] = _unquote(val)
                 current_key = None
             else:
                 current_key = key

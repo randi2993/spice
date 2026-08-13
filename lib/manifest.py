@@ -4,7 +4,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MANIFEST_FILE = "installed.json"
-TOOLKIT_VERSION = "1.0.0"
+TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
+_UNKNOWN_VERSION = "0.0.0"
+
+
+def toolkit_version() -> str:
+    """Reads the real toolkit version from manifest.json.
+
+    Previously a hardcoded constant, which meant installed.json recorded a
+    version that stopped matching the toolkit as soon as it advanced.
+    """
+    try:
+        with open(TOOLKIT_ROOT / "manifest.json", encoding="utf-8") as f:
+            return json.load(f).get("version", _UNKNOWN_VERSION)
+    except (OSError, json.JSONDecodeError):
+        return _UNKNOWN_VERSION
 
 
 def _manifest_path(agent_dir: Path) -> Path:
@@ -28,7 +42,7 @@ def save(agent_dir: Path, manifest: dict) -> None:
 
 def _empty() -> dict:
     return {
-        "toolkit_version": TOOLKIT_VERSION,
+        "toolkit_version": toolkit_version(),
         "installed_at": _now(),
         "components": {}
     }

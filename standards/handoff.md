@@ -1,6 +1,6 @@
 ---
 name: handoff
-version: 1.0.0
+version: 1.1.0
 description: Role-to-role delivery formats (YAML handoffs).
 ---
 
@@ -93,11 +93,16 @@ handoff:
 
 ## Use with `spice run-agent`
 
-When invoking a role via `spice run-agent`, pass the handoff YAML as `--context`:
+Write the handoff to a file and pass it with `--context-file`:
 
-```bash
-spice run-agent --role qa --model sonnet --provider anthropic \
-  --context "$(cat handoff.yaml)"
 ```
+spice run-agent --role qa --model sonnet --provider anthropic --context-file handoff.yaml
+```
+
+Use `--context-file`, not `--context "$(cat handoff.yaml)"`. Command substitution
+is bash-only — it does not work in cmd.exe or PowerShell — and inlining a long
+handoff can exceed the command-line length limit on Windows.
+
+For a short, one-line task, `--context "..."` is still fine.
 
 The target agent reads the YAML, treats it as its inputs, and produces its own handoff to the next role.

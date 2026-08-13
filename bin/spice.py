@@ -86,6 +86,8 @@ def build_parser():
     # update
     p_update = sub.add_parser("update", help="Sync with latest toolkit version")
     p_update.add_argument("--check", action="store_true", help="Show diff only, don't apply")
+    p_update.add_argument("--allow-downgrade", action="store_true",
+                          help="Apply components whose toolkit version is older than installed")
 
     # doctor
     sub.add_parser("doctor", help="Verify .agent/ integrity")
@@ -98,7 +100,10 @@ def build_parser():
     p_run.add_argument("--role",     required=True, help="Role to execute (e.g. qa)")
     p_run.add_argument("--model",    required=True, help="Model name (e.g. sonnet, gemini-pro)")
     p_run.add_argument("--provider", required=True, help="Provider name from providers.json")
-    p_run.add_argument("--context",  required=True, help="Context/task description")
+    p_run_ctx = p_run.add_mutually_exclusive_group(required=True)
+    p_run_ctx.add_argument("--context", help="Context/task description")
+    p_run_ctx.add_argument("--context-file",
+                           help="Read context from a file (shell-agnostic; use for long handoffs)")
     p_run.add_argument("--output",   help="Path to write output (default: .agent/memory/runs/<ts>-<role>.md)")
 
     # providers

@@ -351,18 +351,45 @@ def cmd_update(args):
     manifest = mf.load(AGENT_DIR)
     components = list(manifest.get("components", {}).values())
     updated = 0
+    skipped: list[str] = []
     for entry in components:
         ctype, name = entry["type"], entry["name"]
         src = _toolkit_component_path(ctype, name)
         if not src.exists():
             continue
         new_ver = dr.get_frontmatter(src).get("version", "0.0.0")
-        if new_ver != entry["version"]:
+        if new_ver == entry["version"]:
+            continue
+        if _version_tuple(new_ver) < _version_tuple(entry["version"]):
+            if not getattr(args, "allow_downgrade", False):
+                skipped.append(f"{ctype}/{name}: v{entry['version']} → v{new_ver}")
+                continue
+            print(f"  {ctype}/{name}: v{entry['version']} → v{new_ver}  (DOWNGRADE)")
+        else:
             print(f"  {ctype}/{name}: v{entry['version']} → v{new_ver}")
-            _install_single(ctype, name, manifest, quiet=True)
-            updated += 1
+        _install_single(ctype, name, manifest, quiet=True)
+        updated += 1
+
+    manifest["toolkit_version"] = mf.toolkit_version()
     mf.save(AGENT_DIR, manifest)
+
+    if skipped:
+        print("[spice] Skipped (toolkit has an older version than installed):")
+        for line in skipped:
+            print(f"  ! {line}")
+        print("        Use --allow-downgrade to apply them anyway.")
     print(f"[spice] {updated} component(s) updated." if updated else "[spice] Up to date.")
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    """Loose semver parse for comparison. Non-numeric chunks count as 0."""
+    parts = []
+    for chunk in str(version).split(".")[:3]:
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)  # type: ignore[return-value]
 
 
 # ── doctor ───────────────────────────────────────────────────────────────────
@@ -542,11 +569,6 @@ def _detect_stack() -> tuple[str, str]:
             languages.append("java")
         stack_tags.append("gradle")
 
-    # DB hints
-    if any(cwd.glob("**/*.sql")) or "sqlserver" in str(cwd.glob("**/appsettings*.json")).lower():
-        # heuristic — only add if clearly present
-        pass
-
     return ",".join(languages), ",".join(stack_tags)
 
 
@@ -619,16 +641,26 @@ def cmd_run_agent(args):
 
     role_content = role_path.read_text(encoding="utf-8")
 
+    # Context: inline or from file. --context-file avoids shell-specific
+    # command substitution and keeps long handoffs off the command line.
+    if getattr(args, "context_file", None):
+        ctx_path = Path(args.context_file)
+        if not ctx_path.exists():
+            print(f"[spice] Context file not found: {ctx_path}")
+            sys.exit(1)
+        context = ctx_path.read_text(encoding="utf-8")
+    else:
+        context = args.context
+
     # Resolve output path
     output_path = Path(args.output) if args.output else _default_run_output(args.role)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build command
     cmd = [
         provider["cli"],
         provider["model_flag"], args.model,
         provider["system_flag"], role_content,
-        args.context
+        context
     ]
 
     print(f"[spice] Running role '{args.role}' with {args.provider}/{args.model}...")
@@ -641,12 +673,16 @@ def cmd_run_agent(args):
         print(f"        Make sure it is installed.")
         sys.exit(1)
 
-    output_path.write_text(result.stdout, encoding="utf-8")
-
+    # Write only on success — a failed run used to leave an empty or partial
+    # file in runs/, which `reporter` would then consolidate as if it were real.
     if result.returncode != 0:
         print(f"[spice] Agent run failed (exit {result.returncode}):")
-        print(result.stderr)
+        print(result.stderr.strip())
+        print("[spice] No output file written.")
         sys.exit(result.returncode)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(result.stdout, encoding="utf-8")
 
     print(f"[spice] Done. Read output: {output_path}")
     # Print path to stdout for orchestrator to capture
