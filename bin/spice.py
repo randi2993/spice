@@ -141,6 +141,8 @@ def build_parser():
     p_run_ctx.add_argument("--context-file",
                            help="Read context from a file (shell-agnostic; use for long handoffs)")
     p_run.add_argument("--output",   help="Path to write output (default: .agent/memory/runs/<ts>-<role>.md)")
+    p_run.add_argument("--timeout",  type=int, default=300,
+                       help="Seconds to wait for the agent before giving up (default: 300)")
 
     # providers
     p_prov = _cmd(

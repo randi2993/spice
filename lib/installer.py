@@ -1463,9 +1463,13 @@ def cmd_run_agent(args):
     # Resolve output path
     output_path = Path(args.output) if args.output else _default_run_output(args.role)
 
-    # Build command
-    cmd = [
-        provider["cli"],
+    # Build command. The one-shot flag goes first: most CLIs treat it as a mode
+    # switch rather than an option of the prompt.
+    cmd = [provider["cli"]]
+    oneshot = provider.get("oneshot_flag", "").strip()
+    if oneshot:
+        cmd.append(oneshot)
+    cmd += [
         provider["model_flag"], args.model,
         provider["system_flag"], role_content,
         context
@@ -1473,12 +1477,27 @@ def cmd_run_agent(args):
 
     print(f"[spice] Running role '{args.role}' with {args.provider}/{args.model}...")
     print(f"        Output: {output_path}")
+    if not oneshot:
+        print(f"        ! No oneshot_flag configured for '{args.provider}'. If"
+              f" {provider['cli']} opens an")
+        print(f"          interactive session instead of printing, this will time out.")
 
+    timeout = getattr(args, "timeout", None) or 300
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                encoding="utf-8", timeout=timeout)
     except FileNotFoundError:
         print(f"[spice] CLI '{provider['cli']}' not found in PATH.")
         print(f"        Make sure it is installed.")
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        # An interactive session with its stdout captured never returns, so
+        # without a timeout this hangs silently and forever.
+        print(f"[spice] No response after {timeout}s. Killed.")
+        print(f"        The usual cause is a missing one-shot flag: the CLI opened")
+        print(f"        an interactive session and is waiting for input.")
+        print(f"        Set it with 'spice providers add {args.provider}'"
+              f" (Claude Code uses -p).")
         sys.exit(1)
 
     # Write only on success — a failed run used to leave an empty or partial
@@ -1534,12 +1553,15 @@ def _providers_add(name: str):
     model_flag  = _ask("Model flag (e.g. --model, -m)", default="--model")
     system_flag = _ask("System prompt flag (e.g. --append-system-prompt, --system)",
                        default="--append-system-prompt")
+    print("  One-shot flag: makes the CLI print an answer and exit instead of")
+    print("  opening an interactive session. Without it run-agent times out.")
+    oneshot     = _ask("One-shot flag (e.g. -p for Claude Code)", default="-p")
 
     if not cli:
         print("[spice] CLI command required. Aborted.")
         return
 
-    prov.add_provider(name, cli, model_flag, system_flag)
+    prov.add_provider(name, cli, model_flag, system_flag, oneshot)
     print(f"\n[spice] Provider '{name}' added.")
     print(f"        Config: {prov.PROVIDERS_FILE}")
 
@@ -1556,9 +1578,11 @@ def _providers_list():
     for name, cfg in providers.items():
         marker = " (default)" if name == default else ""
         print(f"  {name}{marker}")
-        print(f"    cli:         {cfg['cli']}")
-        print(f"    model_flag:  {cfg['model_flag']}")
-        print(f"    system_flag: {cfg['system_flag']}")
+        print(f"    cli:          {cfg['cli']}")
+        print(f"    model_flag:   {cfg['model_flag']}")
+        print(f"    system_flag:  {cfg['system_flag']}")
+        oneshot = cfg.get("oneshot_flag", "")
+        print(f"    oneshot_flag: {oneshot if oneshot else '(none — run-agent may hang)'}")
         print()
 
 

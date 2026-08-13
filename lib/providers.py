@@ -48,12 +48,17 @@ def save(data: dict) -> None:
         f.write("\n")
 
 
-def add_provider(name: str, cli: str, model_flag: str, system_flag: str) -> None:
+def add_provider(name: str, cli: str, model_flag: str, system_flag: str,
+                 oneshot_flag: str = "") -> None:
     data = load()
     data["providers"][name] = {
         "cli": cli,
         "model_flag": model_flag,
         "system_flag": system_flag,
+        # Without this, a CLI invoked with a prompt opens an interactive
+        # session instead of printing and exiting, and run-agent waits on it
+        # forever with its output captured.
+        "oneshot_flag": oneshot_flag,
     }
     if data.get("default") is None:
         data["default"] = name
