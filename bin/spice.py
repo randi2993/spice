@@ -68,6 +68,8 @@ def build_parser():
     p_init.add_argument("--no-onboard", action="store_true", help="Skip interactive onboarding")
     p_init.add_argument("--yes", "-y", action="store_true",
                         help="Accept the suggested profile and skip all prompts")
+    p_init.add_argument("--profile",
+                        help="Security profile to start with (default: standard)")
     p_init.add_argument("--tools",
                         help="Tools to target: names, 'all', or 'none' (e.g. claude,gemini)")
 

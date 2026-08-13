@@ -91,6 +91,7 @@ def cmd_init(args):
     # meant aborting at a prompt left a half-built .agent/ behind — which the
     # next `spice init` then refused to touch, because it already existed.
     tools = _choose_tools(args, assume_yes)
+    profile_name = _choose_profile(args)
     want_profile = _confirm_profile(assume_yes)
     want_onboard = _confirm_onboarding(args, assume_yes)
 
@@ -99,8 +100,7 @@ def cmd_init(args):
     try:
         _copy_core()
         _init_manifest()
-        prof.save(AGENT_DIR,
-                  prof.build(prof.available().get("default", "standard"), tools))
+        prof.save(AGENT_DIR, prof.build(profile_name, tools))
         created_files = _create_root_entrypoints(tools)
 
         if want_profile:
@@ -124,6 +124,19 @@ def cmd_init(args):
         _run_onboarding()
 
     print("\n[spice] Done. Open your CLI of choice in this project.")
+
+
+def _choose_profile(args) -> str:
+    """Security profile to start with. Validated before anything is written."""
+    catalog = prof.available()
+    requested = getattr(args, "profile", None)
+    if not requested:
+        return catalog.get("default", "standard")
+    if requested not in catalog.get("profiles", {}):
+        print(f"[spice] Unknown profile '{requested}'. "
+              f"Available: {', '.join(sorted(catalog.get('profiles', {})))}")
+        sys.exit(1)
+    return requested
 
 
 def _confirm_profile(assume_yes: bool) -> bool:

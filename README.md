@@ -55,7 +55,7 @@ drops it if you would rather manage that tool's config yourself.
 
 | Command | What it does |
 |---|---|
-| `spice init [--force] [--no-onboard] [--yes] [--tools a,b]` | Initialize `.agent/`. `--force` refreshes templates and **keeps** `memory/` and `project/`. |
+| `spice init [--force] [--no-onboard] [--yes] [--tools a,b] [--profile p]` | Initialize `.agent/`. `--force` refreshes templates and **keeps** `memory/` and `project/`. |
 | `spice add <component> [--from <path>]` | Install a component and its dependencies. |
 | `spice remove <component> [--yes]` | Uninstall a component. |
 | `spice list [--available]` | List installed components, or everything in the toolkit. |
@@ -167,6 +167,7 @@ implements it in its own engine and none reads another's configuration.
 | `open` | ✓ | ✓ | ✓ | writes only |
 
 ```bash
+spice init --profile strict  # start there, rather than switching afterwards
 spice profile list
 spice profile set strict     # re-renders every installed adapter
 spice profile show           # what is active, and what actually enforces it
