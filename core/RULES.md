@@ -158,6 +158,25 @@ Sign the entry with the role that closed the session. ONLY sign as a role you ac
 
 ---
 
+## Memory is a record, not current truth
+
+Entries in `.agent/memory/` describe what was true when they were written. Files
+get renamed, components get uninstalled, decisions get reversed.
+
+Before acting on anything a memory entry points at, **verify it still exists**.
+If it does not, STOP and report the discrepancy to the user:
+
+> "`decisions.md` ADR-003 points at `src/executor.ts`, which is no longer
+> there. Should I update the reference or mark the ADR as superseded?"
+
+Do NOT improvise a replacement, and do NOT quietly ignore the entry. A wrong
+guess about a stale reference is how a small drift becomes a wrong change.
+
+`spice doctor` reports dangling references, but it runs when someone asks it to
+— this rule is what covers the rest of the time.
+
+---
+
 ## Installed roles
 
 <!-- SPICE:ROLES:START -->

@@ -95,6 +95,10 @@ def build_parser():
     p_update.add_argument("--check", action="store_true", help="Show diff only, don't apply")
     p_update.add_argument("--allow-downgrade", action="store_true",
                           help="Apply components whose toolkit version is older than installed")
+    p_update.add_argument("--refresh-core", action="store_true",
+                          help="Also refresh core templates (keeps memory/ and project/)")
+    p_update.add_argument("--no-pull", action="store_true",
+                          help="Do not git pull the toolkit first")
 
     # doctor
     _cmd(sub, "doctor", "Verify .agent/ integrity")

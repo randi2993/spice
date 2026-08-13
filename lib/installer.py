@@ -3,6 +3,7 @@ installer.py — Command implementations.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -197,7 +198,9 @@ def cmd_add(args):
     manifest = mf.load(AGENT_DIR)
     for dep_type, dep_name in order:
         _install_single(dep_type, dep_name, manifest, quiet=False)
-    mf.save(AGENT_DIR, manifest)
+        # Saved after each component: a missing dependency aborts the loop, and
+        # everything copied before it used to be left on disk unrecorded.
+        mf.save(AGENT_DIR, manifest)
 
 
 def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
@@ -525,13 +528,18 @@ def _discover_components(ctype: str) -> list[tuple[str, dict]]:
 
 def cmd_update(args):
     _require_agent_dir()
-    print(f"[spice] Updating toolkit from {TOOLKIT_ROOT} ...")
-    result = subprocess.run(["git", "pull", "--ff-only"], cwd=TOOLKIT_ROOT,
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"[spice] git pull failed:\n{result.stderr}")
-        sys.exit(1)
-    print(result.stdout.strip())
+    _pull_toolkit(args)
+
+    drift = _core_drift()
+    if drift:
+        print("[spice] Core templates differ from the toolkit:")
+        for name in drift:
+            print(f"  ~ {name}")
+        if getattr(args, "refresh_core", False) and not args.check:
+            _refresh_existing()
+        else:
+            print("        Run 'spice update --refresh-core' to apply them")
+            print("        (memory/ and project/ are preserved).")
 
     if args.check:
         print("[spice] --check mode: no changes applied.")
@@ -570,6 +578,65 @@ def cmd_update(args):
     print(f"[spice] {updated} component(s) updated." if updated else "[spice] Up to date.")
 
 
+def _pull_toolkit(args) -> None:
+    """Fast-forwards the toolkit checkout, when there is one.
+
+    A git repository is no longer assumed: the installed copy may have been
+    produced by install.bat rather than cloned, and a missing .git must not
+    make `spice update` fail outright.
+    """
+    if getattr(args, "no_pull", False):
+        return
+    if not (TOOLKIT_ROOT / ".git").exists():
+        print(f"[spice] Toolkit at {TOOLKIT_ROOT} is not a git checkout, skipping pull.")
+        return
+    print(f"[spice] Updating toolkit from {TOOLKIT_ROOT} ...")
+    try:
+        result = subprocess.run(["git", "pull", "--ff-only"], cwd=TOOLKIT_ROOT,
+                                capture_output=True, text=True)
+    except FileNotFoundError:
+        print("[spice] git not found in PATH, skipping pull.")
+        return
+    if result.returncode != 0:
+        print(f"[spice] git pull failed (continuing with the local copy):")
+        print(f"        {result.stderr.strip()}")
+        return
+    print(result.stdout.strip())
+
+
+def _core_drift() -> list[str]:
+    """core/ files that differ from the toolkit template.
+
+    `update` only ever reinstalled manifest components, so RULES.md and the
+    config templates never reached projects already initialised. User-owned
+    directories are excluded — their contents are supposed to differ.
+    """
+    core_src = TOOLKIT_ROOT / "core"
+    if not core_src.exists():
+        return []
+    drifted = []
+    for item in sorted(core_src.rglob("*")):
+        if item.is_dir():
+            continue
+        rel = item.relative_to(core_src)
+        if rel.parts and rel.parts[0] in USER_OWNED:
+            continue
+        dest = AGENT_DIR / rel
+        if not dest.exists():
+            drifted.append(f"{rel.as_posix()}  (missing)")
+            continue
+        if _normalised(item) != _normalised(dest, strip_markers=rel.name == "RULES.md"):
+            drifted.append(rel.as_posix())
+    return drifted
+
+
+def _normalised(path: Path, strip_markers: bool = False) -> str:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if strip_markers:
+        text = re_mod.strip_managed(text)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
 def _version_tuple(version: str) -> tuple[int, int, int]:
     """Loose semver parse for comparison. Non-numeric chunks count as 0."""
     parts = []
@@ -583,73 +650,171 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
 
 # ── doctor ───────────────────────────────────────────────────────────────────
 
+COMPONENT_TYPES = ("roles", "playbooks", "standards", "skills")
+
+
 def cmd_doctor(args):
     _require_agent_dir()
-    errors = []
-    warnings = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
-    # 1. Core files
-    required = [
-        "RULES.md",
-        "installed.json",
-        "project/CONTEXT.md",
-        "project/architecture.md",
-    ]
-    for fname in required:
+    manifest = mf.load(AGENT_DIR)
+    components = manifest.get("components", {})
+    rules_path = AGENT_DIR / "RULES.md"
+
+    # 1. Files and directories that ship with core/ and always exist.
+    for fname in ("RULES.md", "installed.json",
+                  "project/CONTEXT.md", "project/architecture.md"):
         if not (AGENT_DIR / fname).exists():
             errors.append(f"Missing core file: .agent/{fname}")
-
-    required_dirs = ["config", "memory", "roles", "playbooks", "standards", "project"]
-    for sub in required_dirs:
+    for sub in ("config", "memory", "project"):
         if not (AGENT_DIR / sub).exists():
             errors.append(f"Missing directory: .agent/{sub}/")
 
-    # 2. RULES.md markers
-    rules_path = AGENT_DIR / "RULES.md"
-    if rules_path.exists():
-        ok, errs = re_mod.validate_markers(rules_path)
-        for e in errs:
-            errors.append(f"RULES.md: {e}")
+    # 2. Component directories are required only when components of that type
+    #    are installed. A docs project with a single role and no git playbook
+    #    is a valid install, and used to be reported as three errors.
+    for ctype in sorted({e["type"] for e in components.values()}):
+        if not (AGENT_DIR / ctype).exists():
+            errors.append(f"Missing .agent/{ctype}/ but the manifest records "
+                          f"components of that type")
 
-    # 3. Manifest vs disk
-    manifest = mf.load(AGENT_DIR)
-    for key, entry in manifest.get("components", {}).items():
+    # 3. RULES.md markers
+    if rules_path.exists():
+        _, marker_errors = re_mod.validate_markers(rules_path)
+        errors.extend(f"RULES.md: {e}" for e in marker_errors)
+
+    # 4. Manifest -> disk
+    for key, entry in components.items():
         ctype, name = entry["type"], entry["name"]
         dest = _agent_component_dest(ctype, name)
         if not dest.exists():
-            errors.append(f"Component in manifest but not on disk: {key}")
+            errors.append(f"In manifest but not on disk: {key}")
             continue
-        # Version match check
         fm = dr.get_frontmatter(dest)
         disk_ver = fm.get("version", "0.0.0")
         if disk_ver != entry["version"]:
-            warnings.append(f"Version mismatch for {key}: manifest={entry['version']}, disk={disk_ver}")
-        # Role tier check
+            warnings.append(f"Version mismatch for {key}: "
+                            f"manifest={entry['version']}, disk={disk_ver}")
         if ctype == "roles":
             if "tier" not in fm:
                 warnings.append(f"Role {name} has no 'tier' in frontmatter")
             elif fm["tier"] not in ("light", "standard", "heavy"):
-                errors.append(f"Role {name}: invalid tier '{fm['tier']}'. Must be light|standard|heavy")
+                errors.append(f"Role {name}: invalid tier '{fm['tier']}'. "
+                              f"Must be light|standard|heavy")
 
-    # 4. Root entry points
+    # 5. Disk -> manifest. An aborted install could leave files behind with no
+    #    record; only the opposite direction was ever checked.
+    for key in sorted(_components_on_disk() - set(components)):
+        warnings.append(f"On disk but not in manifest: {key}  "
+                        f"(reinstall it, or delete the file)")
+
+    # 6. Manifest -> RULES.md roster. These drift silently: reinstalling the
+    #    same version returns early, before the RULES.md injection.
+    if rules_path.exists():
+        listed_roles = re_mod.listed_entries(rules_path, re_mod.ROLES_MARKER)
+        expected_roles = {e["name"] for e in components.values() if e["type"] == "roles"}
+        for name in sorted(expected_roles - listed_roles):
+            errors.append(f"Role '{name}' is installed but missing from the "
+                          f"RULES.md roster")
+        for name in sorted(listed_roles - expected_roles):
+            errors.append(f"Role '{name}' is listed in RULES.md but not installed")
+
+    # 7. Dangling references in memory. Reported, never removed: an outdated
+    #    pointer is worth less than the reasoning it sits next to.
+    warnings.extend(_memory_reference_warnings())
+
+    # 8. Execution protocol coverage
+    if not any(e["type"] == "roles" for e in components.values()):
+        warnings.append("No roles installed — the RULES.md execution protocol "
+                        "requires adopting roles it cannot find")
+
+    # 9. Root entry points
     for fname in ("CLAUDE.md", "GEMINI.md"):
         if not Path(fname).exists():
             warnings.append(f"Missing root entry point: {fname}")
 
-    # Report
     if not errors and not warnings:
         print("[spice] All checks passed.")
         return
     if errors:
         print("[spice] ERRORS:")
         for e in errors:
-            print(f"  ✗ {e}")
+            print(f"  x {e}")
     if warnings:
         print("[spice] WARNINGS:")
         for w in warnings:
             print(f"  ! {w}")
     if errors:
         sys.exit(1)
+
+
+def _components_on_disk() -> set[str]:
+    found = set()
+    for ctype in COMPONENT_TYPES:
+        base = AGENT_DIR / ctype
+        if not base.exists():
+            continue
+        if ctype == "skills":
+            found |= {f"skills/{d.name}" for d in base.iterdir()
+                      if d.is_dir() and (d / "SKILL.md").exists()}
+        else:
+            found |= {f"{ctype}/{f.stem}" for f in base.glob("*.md")}
+    return found
+
+
+_REFS_RE   = re.compile(r"\*\*Refs:\*\*\s*(.+)", re.IGNORECASE)
+_SOURCE_RE = re.compile(r"\(Source:\s*([^)]+)\)", re.IGNORECASE)
+
+
+def _memory_reference_warnings() -> list[str]:
+    """Checks that what memory points at still exists.
+
+    Only structured references are checkable — `**Refs:**` in decisions.md and
+    `(Source: ...)` in learned.md. Anything containing a space is treated as
+    prose or a command and skipped.
+    """
+    out = []
+    for filename, pattern in (("decisions.md", _REFS_RE), ("learned.md", _SOURCE_RE)):
+        path = AGENT_DIR / "memory" / filename
+        if not path.exists():
+            continue
+        in_fence = in_comment = False
+        for lineno, line in enumerate(path.read_text(encoding="utf-8",
+                                                     errors="replace").splitlines(), 1):
+            stripped = line.strip()
+            # The templates document the reference format inside fenced blocks
+            # and HTML comments; those examples are not real entries.
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if "<!--" in stripped:
+                in_comment = "-->" not in stripped
+                continue
+            if in_comment:
+                in_comment = "-->" not in stripped
+                continue
+            if in_fence:
+                continue
+            match = pattern.search(line)
+            if not match:
+                continue
+            for ref in (r.strip() for r in match.group(1).split(",")):
+                if not ref or " " in ref:
+                    continue
+                if not _reference_exists(ref):
+                    out.append(f"memory/{filename}:{lineno} points at '{ref}', "
+                               f"which no longer exists")
+    return out
+
+
+def _reference_exists(ref: str) -> bool:
+    if Path(ref).exists() or (AGENT_DIR / ref).exists():
+        return True
+    ctype, _, name = ref.partition("/")
+    if name and ctype in COMPONENT_TYPES:
+        return _agent_component_dest(ctype, name).exists()
+    return False
 
 
 # ── onboard ──────────────────────────────────────────────────────────────────

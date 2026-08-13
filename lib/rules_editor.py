@@ -1,6 +1,7 @@
 """
 rules_editor.py — Manages SPICE:ROLES and SPICE:SKILLS markers in RULES.md.
 """
+import re
 from pathlib import Path
 
 # Marker labels
@@ -36,6 +37,32 @@ def remove_skill(rules_path: Path, name: str) -> bool:
 
 def remove_role(rules_path: Path, name: str) -> bool:
     return _remove_line(rules_path, ROLES_MARKER, key=f"**{name}**")
+
+
+_ENTRY_RE = re.compile(r"^- \*\*([^*]+)\*\*", re.MULTILINE)
+
+
+def listed_entries(rules_path: Path, label: str) -> set[str]:
+    """Names currently registered inside a managed block.
+
+    Lets `doctor` compare what RULES.md advertises against what the manifest
+    records — they can drift, and nothing used to notice.
+    """
+    if not rules_path.exists():
+        return set()
+    section = _section(rules_path.read_text(encoding="utf-8"), label)
+    return {m.group(1).strip() for m in _ENTRY_RE.finditer(section)}
+
+
+def strip_managed(content: str) -> str:
+    """Content with managed block bodies emptied, so prose can be diffed."""
+    for label in (ROLES_MARKER, SKILLS_MARKER):
+        s, e = _start(label), _end(label)
+        if s in content and e in content and content.index(s) < content.index(e):
+            head = content[:content.index(s) + len(s)]
+            tail = content[content.index(e):]
+            content = head + "\n" + tail
+    return content
 
 
 def validate_markers(rules_path: Path) -> tuple[bool, list[str]]:
