@@ -244,7 +244,10 @@ Detection emits both the generic and the versioned form (`angular` and
 **Detectable tags:** `csharp` `dotnet` `typescript` `javascript` `angular`
 `react` `vue` `nextjs` `nuxt` `svelte` `astro` `express` `nestjs` `python`
 `django` `fastapi` `flask` `rust` `go` `dart` `flutter` `java` `kotlin` `maven`
-`gradle` `php` `laravel` `symfony` `ruby` `rails` `swift`
+`gradle` `php` `laravel` `symfony` `ruby` `rails` `swift` `renpy`
+
+When a project declares no manifest at all, languages are inferred from the
+source files actually present.
 
 ---
 

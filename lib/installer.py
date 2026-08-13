@@ -1446,6 +1446,7 @@ DETECTABLE_TAGS = frozenset({
     "dart", "flutter",
     "java", "kotlin", "maven", "gradle",
     "php", "laravel", "symfony",
+    "renpy",
     "ruby", "rails",
     "swift",
 })
@@ -1573,7 +1574,78 @@ def _detect_lists() -> tuple[list[str], list[str]]:
     if (cwd / "Package.swift").exists() or list(cwd.glob("*.xcodeproj")):
         languages.append("swift")
 
+    # Ren'Py: the bundled engine sitting beside a game directory, or .rpy
+    # scripts. Checked at the root and one level down, because a distributed
+    # game commonly lives under src/ or a similar wrapper rather than at the
+    # top of the repository.
+    if _renpy_root(cwd) or _has_any(cwd, "*.rpy", depth=3):
+        stack_tags.append("renpy")
+        if "python" not in languages:
+            languages.append("python")
+
+    # Nothing declared a manifest, so fall back to what is actually on disk.
+    # Plenty of real projects have no package file at all — a Ren'Py game, a
+    # pile of scripts — and reporting "language: ?" for them is a poor answer
+    # when the files are right there.
+    if not languages:
+        languages = _languages_from_sources(cwd)
+
     return languages, stack_tags
+
+
+_SOURCE_LANGUAGES = {
+    ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+    ".js": "javascript", ".jsx": "javascript", ".cs": "csharp",
+    ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin",
+    ".rb": "ruby", ".php": "php", ".swift": "swift", ".dart": "dart",
+    ".rpy": "python",
+}
+
+_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__",
+              "dist", "build", ".agent", ".claude"}
+
+
+def _renpy_root(root: Path) -> bool:
+    """A `renpy/` engine directory next to a `game/` one, here or one level in."""
+    candidates = [root] + [d for d in root.iterdir()
+                           if d.is_dir() and not d.name.startswith(".")]
+    return any((c / "renpy").is_dir() and (c / "game").is_dir() for c in candidates)
+
+
+def _has_any(root: Path, pattern: str, depth: int) -> bool:
+    prefix = ""
+    for _ in range(depth + 1):
+        if next(root.glob(prefix + pattern), None) is not None:
+            return True
+        prefix += "*/"
+    return False
+
+
+def _languages_from_sources(root: Path, limit: int = 5000) -> list[str]:
+    """Infers languages from file extensions, capped so a large tree stays fast.
+
+    A language needs several files before it counts: one stray script should
+    not label the whole project.
+    """
+    counts: dict[str, int] = {}
+    seen = 0
+    stack = [root]
+    while stack and seen < limit:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
+                    stack.append(entry)
+                continue
+            seen += 1
+            language = _SOURCE_LANGUAGES.get(entry.suffix.lower())
+            if language:
+                counts[language] = counts.get(language, 0) + 1
+    return [lang for lang, n in sorted(counts.items(), key=lambda kv: -kv[1]) if n >= 3]
 
 
 def _ask(question: str, default: str = "") -> str:
