@@ -1574,11 +1574,17 @@ def _detect_lists() -> tuple[list[str], list[str]]:
     if (cwd / "Package.swift").exists() or list(cwd.glob("*.xcodeproj")):
         languages.append("swift")
 
-    # Ren'Py: the bundled engine sitting beside a game directory, or .rpy
-    # scripts. Checked at the root and one level down, because a distributed
-    # game commonly lives under src/ or a similar wrapper rather than at the
-    # top of the repository.
-    if _renpy_root(cwd) or _has_any(cwd, "*.rpy", depth=3):
+    # Signals that come from the files themselves rather than from a manifest.
+    # Scanned once and reused, so a project that already declared a manifest
+    # only pays for the walk if something below actually needs it.
+    extensions = _ExtensionScan(cwd)
+
+    # Ren'Py, by its own file extensions. Matching on `renpy/` next to `game/`
+    # was the earlier approach and it was the weak kind of guess: those are
+    # ordinary directory names, and it depended on how deeply the game happened
+    # to be nested. `.rpy`, `.rpyc` and `.rpa` belong to no other tool, and
+    # .rpyc/.rpa also cover a distributed game whose sources were compiled away.
+    if extensions.any_of(".rpy", ".rpyc", ".rpa"):
         stack_tags.append("renpy")
         if "python" not in languages:
             languages.append("python")
@@ -1588,7 +1594,7 @@ def _detect_lists() -> tuple[list[str], list[str]]:
     # pile of scripts — and reporting "language: ?" for them is a poor answer
     # when the files are right there.
     if not languages:
-        languages = _languages_from_sources(cwd)
+        languages = extensions.languages()
 
     return languages, stack_tags
 
@@ -1598,54 +1604,61 @@ _SOURCE_LANGUAGES = {
     ".js": "javascript", ".jsx": "javascript", ".cs": "csharp",
     ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin",
     ".rb": "ruby", ".php": "php", ".swift": "swift", ".dart": "dart",
-    ".rpy": "python",
 }
 
 _SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__",
               "dist", "build", ".agent", ".claude"}
 
 
-def _renpy_root(root: Path) -> bool:
-    """A `renpy/` engine directory next to a `game/` one, here or one level in."""
-    candidates = [root] + [d for d in root.iterdir()
-                           if d.is_dir() and not d.name.startswith(".")]
-    return any((c / "renpy").is_dir() and (c / "game").is_dir() for c in candidates)
+class _ExtensionScan:
+    """Counts file extensions across the tree, once and on demand.
 
-
-def _has_any(root: Path, pattern: str, depth: int) -> bool:
-    prefix = ""
-    for _ in range(depth + 1):
-        if next(root.glob(prefix + pattern), None) is not None:
-            return True
-        prefix += "*/"
-    return False
-
-
-def _languages_from_sources(root: Path, limit: int = 5000) -> list[str]:
-    """Infers languages from file extensions, capped so a large tree stays fast.
-
-    A language needs several files before it counts: one stray script should
-    not label the whole project.
+    Capped and vendor-skipping so a large repository stays fast: without a cap,
+    a tree with tens of thousands of files would make `spice init` look hung.
     """
-    counts: dict[str, int] = {}
-    seen = 0
-    stack = [root]
-    while stack and seen < limit:
-        current = stack.pop()
-        try:
-            entries = list(current.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.is_dir():
-                if entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
-                    stack.append(entry)
-                continue
-            seen += 1
-            language = _SOURCE_LANGUAGES.get(entry.suffix.lower())
+
+    def __init__(self, root: Path, limit: int = 5000):
+        self._root = root
+        self._limit = limit
+        self._counts: dict[str, int] | None = None
+
+    def counts(self) -> dict[str, int]:
+        if self._counts is None:
+            self._counts = self._walk()
+        return self._counts
+
+    def any_of(self, *suffixes: str) -> bool:
+        return any(self.counts().get(s, 0) for s in suffixes)
+
+    def languages(self) -> list[str]:
+        totals: dict[str, int] = {}
+        for suffix, n in self.counts().items():
+            language = _SOURCE_LANGUAGES.get(suffix)
             if language:
-                counts[language] = counts.get(language, 0) + 1
-    return [lang for lang, n in sorted(counts.items(), key=lambda kv: -kv[1]) if n >= 3]
+                totals[language] = totals.get(language, 0) + n
+        # Several files before a language counts: one stray script should not
+        # label the whole project.
+        return [lang for lang, n in sorted(totals.items(), key=lambda kv: -kv[1])
+                if n >= 3]
+
+    def _walk(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        seen = 0
+        stack = [self._root]
+        while stack and seen < self._limit:
+            try:
+                entries = list(stack.pop().iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.is_dir():
+                    if entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
+                        stack.append(entry)
+                    continue
+                seen += 1
+                suffix = entry.suffix.lower()
+                counts[suffix] = counts.get(suffix, 0) + 1
+        return counts
 
 
 def _ask(question: str, default: str = "") -> str:
