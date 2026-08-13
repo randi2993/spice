@@ -249,7 +249,7 @@ Detection emits both the generic and the versioned form (`angular` and
 ### Skills
 | Name | Category | Description |
 |---|---|---|
-| `token-counter` | meta | Count tokens to estimate cost and manage context. Requires `tiktoken`. |
+| `token-counter` | meta | Count tokens to estimate cost and manage context. Estimates without dependencies; measures if `tiktoken` is installed. |
 | `csharp-rest-api` | stack | C# .NET 8 REST APIs — Clean Architecture, JWT, EF Core. |
 
 ---
@@ -347,9 +347,9 @@ Inline lists (`[a, b]`) and dashed lists are both parsed.
 - **Enforcement outside the prompt**: rules the model cannot argue with live in
   adapters, not in Markdown.
 - **Explicit loading**: skills are loaded declaratively, not auto-triggered.
-- **No external dependencies**: the CLI uses only the Python standard
-  library. A skill may declare its own (`token-counter` needs `tiktoken`), but
-  that cost falls only on whoever installs it.
+- **No external dependencies**: the CLI uses only the Python standard library,
+  and a skill degrades rather than refusing to run when an optional one is
+  missing.
 - **Minimal tokens**: the model loads only what the current task needs.
 - **HITL by default**: destructive actions require human approval — including
   spice's own.

@@ -1,27 +1,50 @@
 #!/usr/bin/env python3
 """
 count.py — Count tokens of files or stdin.
-Uses cl100k_base (tiktoken) as approximation for Claude/GPT-4.
 
-Requires: pip install tiktoken
+Two modes. With `tiktoken` installed it measures with cl100k_base; without it,
+it estimates from the text itself and says so. Refusing to run without an
+optional dependency made the whole skill unusable for anyone who had not
+installed it, for questions a rough number answers perfectly well.
+
+Optional: pip install tiktoken
 """
+import re
 import sys
 import argparse
 from pathlib import Path
 
 try:
     import tiktoken
+    ENCODING = "cl100k_base"
+    MODE = f"measured, {ENCODING}"
+    EXACT = True
 except ImportError:
-    print("Error: tiktoken not installed.")
-    print("Install with: pip install tiktoken")
-    sys.exit(1)
+    tiktoken = None
+    MODE = "estimated, no tiktoken installed"
+    EXACT = False
 
-ENCODING = "cl100k_base"
+# Word-ish runs and single symbols. Punctuation is almost always its own token,
+# which is why code produces more tokens per character than prose does.
+_PIECES = re.compile(r"\w+|[^\w\s]")
 
 
 def count_tokens(text: str) -> int:
-    enc = tiktoken.get_encoding(ENCODING)
-    return len(enc.encode(text))
+    if tiktoken is not None:
+        return len(tiktoken.get_encoding(ENCODING).encode(text))
+    return _estimate_tokens(text)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Approximates BPE: a short word is one token, a long one splits, and each
+    symbol counts on its own. Whitespace is absorbed into the adjacent token, so
+    it is not counted separately.
+
+    Expect roughly +/-15%. That is enough to decide whether a file fits in a
+    context window or should be split, which is what this skill is for. Install
+    tiktoken when the exact number matters.
+    """
+    return sum(max(1, round(len(piece) / 5)) for piece in _PIECES.findall(text))
 
 
 def format_number(n: int) -> str:
@@ -38,16 +61,21 @@ def process_file(path: Path) -> int:
     chars = len(text)
     lines = text.count("\n") + 1
     print(f"file:   {path}")
-    print(f"tokens: {format_number(tokens)}  (encoding: {ENCODING})")
+    print(f"tokens: {_prefix()}{format_number(tokens)}  ({MODE})")
     print(f"chars:  {format_number(chars)}")
     print(f"lines:  {format_number(lines)}")
     return tokens
 
 
+def _prefix() -> str:
+    """The tilde is the point: it must be impossible to mistake an estimate
+    for a measurement."""
+    return "" if EXACT else "~"
+
+
 def process_stdin() -> None:
     text = sys.stdin.read()
-    tokens = count_tokens(text)
-    print(f"tokens: {format_number(tokens)}  (encoding: {ENCODING})")
+    print(f"tokens: {_prefix()}{format_number(count_tokens(text))}  ({MODE})")
 
 
 def main():
@@ -83,13 +111,18 @@ def main():
             total += process_file(path)
             processed += 1
 
+    if args.files and args.files != ["-"] and processed == 0:
+        # Nothing matched at all: fail loudly so a script cannot mistake an
+        # empty run for a zero-token result.
+        sys.exit(1)
+
     if processed > 1:
         # The file count is not decoration. `**` is recursive in zsh and in
         # Python, but NOT in bash unless globstar is enabled, so the same
         # command can count a different set of files on each platform. Printing
         # what was actually counted makes that visible instead of silent.
         print(f"-- {format_number(processed)} file(s), "
-              f"TOTAL: {format_number(total)} tokens")
+              f"TOTAL: {_prefix()}{format_number(total)} tokens ({MODE})")
 
 
 if __name__ == "__main__":
