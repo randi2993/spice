@@ -164,6 +164,30 @@ def build_parser():
     return parser
 
 
+class _NoColors:
+    """Every theme field empty, so the same f-strings render plain."""
+    def __getattr__(self, _name): return ""
+
+
+def _theme():
+    """argparse's own colour theme, when this Python and this terminal have one.
+
+    Rendering the command list by hand bypasses argparse's HelpFormatter, which
+    is what colourises help from Python 3.14 on — only the usage line kept its
+    colour. Reusing argparse's theme keeps both halves consistent. The import is
+    guarded: `_colorize` is a private stdlib module that does not exist before
+    3.13, and spice supports 3.10+. Worst case is plain text, never a crash.
+    """
+    try:
+        from _colorize import can_colorize, get_theme  # type: ignore[import-not-found]
+    except ImportError:
+        return _NoColors()
+    try:
+        return get_theme().argparse if can_colorize() else _NoColors()
+    except Exception:
+        return _NoColors()
+
+
 def _optional_flags(subparser) -> list[str]:
     """Longest form of each non-required flag, minus --help."""
     flags = []
@@ -177,20 +201,35 @@ def _optional_flags(subparser) -> list[str]:
 
 
 def _render_help(parser, sub) -> str:
+    t = _theme()
     rows = [(name, (p.description or "").strip(), _optional_flags(p))
             for name, p in sub.choices.items()]
     name_w = max(len(n) for n, _, _ in rows) + 2
     desc_w = max(len(d) for _, d, _ in rows) + 2
 
-    lines = [parser.format_usage().rstrip(), "", HELP_BANNER.rstrip(), "", "commands:"]
+    # Padding is computed on the bare text: colour codes are zero-width on
+    # screen but count as characters, so padding a coloured string misaligns
+    # every column.
+    lines = [parser.format_usage().rstrip(), "", HELP_BANNER.rstrip(), "",
+             f"{t.heading}commands:{t.reset}"]
     for name, desc, flags in rows:
-        suffix = " ".join(f"[{f}]" for f in flags)
-        lines.append(f"  {name.ljust(name_w)}{desc.ljust(desc_w) if suffix else desc}{suffix}".rstrip())
+        painted = f"{t.summary_action}{name}{t.reset}" + " " * (name_w - len(name))
+        suffix = " ".join(f"{t.summary_long_option}[{f}]{t.reset}" for f in flags)
+        if suffix:
+            painted += desc.ljust(desc_w) + suffix
+        else:
+            painted += desc
+        lines.append(f"  {painted}".rstrip())
 
-    lines += ["", "options:"]
+    lines += ["", f"{t.heading}options:{t.reset}"]
     for action in parser._actions:
-        if action.option_strings:
-            lines.append(f"  {', '.join(action.option_strings).ljust(name_w)}{action.help or ''}")
+        if not action.option_strings:
+            continue
+        painted = ", ".join(
+            f"{t.short_option if len(o) == 2 else t.long_option}{o}{t.reset}"
+            for o in action.option_strings)
+        plain_len = len(", ".join(action.option_strings))
+        lines.append(f"  {painted}{' ' * max(1, name_w - plain_len)}{action.help or ''}")
 
     lines += ["", "Run 'spice <command> -h' for the full options of a command.",
               EPILOG.rstrip(), ""]
