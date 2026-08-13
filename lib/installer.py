@@ -243,6 +243,16 @@ def _install_single(ctype: str, name: str, manifest: dict, quiet: bool = True,
     version = fm.get("version", "0.0.0")
     tier    = fm.get("tier")  # only for roles
 
+    # Declared in every skill's frontmatter and documented in the README, but
+    # never actually checked, so it promised a compatibility gate that did not
+    # exist.
+    required = fm.get("min_toolkit_version")
+    if required and _version_tuple(mf.toolkit_version()) < _version_tuple(str(required)):
+        print(f"[spice] {ctype}/{name} needs toolkit v{required}, "
+              f"this one is v{mf.toolkit_version()}.")
+        print(f"        Run 'spice update' to upgrade the toolkit first.")
+        sys.exit(1)
+
     if mf.is_installed(manifest, ctype, name):
         installed_ver = mf.get_version(manifest, ctype, name)
         if installed_ver == version:
@@ -597,14 +607,15 @@ def _list_available():
         for name, fm in components:
             marker = "[✓]" if f"{ctype}/{name}" in installed_keys else "[ ]"
             version = fm.get("version", "?")
-            tier = fm.get("tier")
-            tier_str = f"  (tier: {tier})" if tier else ""
+            labels = [v for v in (fm.get("tier"), fm.get("phase"), fm.get("category")) if v]
+            label_str = f"  ({', '.join(labels)})" if labels else ""
             desc = fm.get("description", "")
             desc_str = f" — {desc}" if desc else ""
-            print(f"    {marker} {name:<22} v{version}{tier_str}{desc_str}")
+            print(f"    {marker} {name:<22} v{version}{label_str}{desc_str}")
         print()
 
     print("Install with: spice add <type>/<name>   (e.g. spice add roles/documenter)")
+    print("Match your stack:  spice suggest")
 
 
 def cmd_search(args):
@@ -621,8 +632,12 @@ def cmd_search(args):
         components = _discover_components(ctype)
         matches = []
         for name, fm in components:
-            desc = (fm.get("description") or "").lower()
-            if query in name.lower() or query in desc:
+            haystack = [name.lower(), (fm.get("description") or "").lower()]
+            for field in ("keywords", "applies_to", "category"):
+                value = fm.get(field) or []
+                haystack.extend(v.lower() for v in
+                                ([value] if isinstance(value, str) else value))
+            if any(query in part for part in haystack):
                 matches.append((name, fm))
         if not matches:
             continue
@@ -631,11 +646,11 @@ def cmd_search(args):
         for name, fm in matches:
             marker = "[✓]" if f"{ctype}/{name}" in installed_keys else "[ ]"
             version = fm.get("version", "?")
-            tier = fm.get("tier")
-            tier_str = f"  (tier: {tier})" if tier else ""
+            labels = [v for v in (fm.get("tier"), fm.get("phase"), fm.get("category")) if v]
+            label_str = f"  ({', '.join(labels)})" if labels else ""
             desc = fm.get("description", "")
             desc_str = f" — {desc}" if desc else ""
-            print(f"    {marker} {name:<22} v{version}{tier_str}{desc_str}")
+            print(f"    {marker} {name:<22} v{version}{label_str}{desc_str}")
         print()
 
     if not found:
@@ -659,6 +674,58 @@ def _discover_components(ctype: str) -> list[tuple[str, dict]]:
             fm = dr.get_frontmatter(f)
             result.append((f.stem, fm))
     return result
+
+
+# ── suggest ──────────────────────────────────────────────────────────────────
+
+def cmd_suggest(args):
+    _require_agent_dir()
+    tags = detect_tags()
+    if not tags:
+        print("[spice] No stack detected in this directory.")
+        print("        Nothing to suggest. Browse with 'spice list --available'.")
+        return
+
+    print(f"[spice] Detected: {', '.join(sorted(tags))}\n")
+    matches = _matching_skills(tags)
+    if not matches:
+        print("  No skill in the toolkit targets this stack yet.")
+        print("  See 'spice list --available' for what exists.")
+        return
+
+    for name, fm, matched in matches:
+        print(f"  skills/{name}  (matches: {', '.join(sorted(matched))})")
+        if fm.get("description"):
+            print(f"    {fm['description']}")
+
+    print()
+    manifest = mf.load(AGENT_DIR)
+    for name, _, _ in matches:
+        if getattr(args, "yes", False):
+            answer = "y"
+            print(f"[spice] --yes: installing skills/{name}")
+        else:
+            print(f"Install skills/{name}? [y/N]: ", end="", flush=True)
+            answer = input().strip().lower()
+        if answer in ("y", "yes"):
+            _install_single("skills", name, manifest, quiet=False)
+            mf.save(AGENT_DIR, manifest)
+
+
+def _matching_skills(tags: set[str]) -> list[tuple[str, dict, set[str]]]:
+    """Uninstalled skills whose applies_to intersects the detected tags."""
+    installed = set(mf.load(AGENT_DIR).get("components", {}))
+    matches = []
+    for name, fm in _discover_components("skills"):
+        if f"skills/{name}" in installed:
+            continue
+        applies = fm.get("applies_to") or []
+        if isinstance(applies, str):
+            applies = [applies]
+        overlap = {a.strip().lower() for a in applies} & tags
+        if overlap:
+            matches.append((name, fm, overlap))
+    return matches
 
 
 # ── update ───────────────────────────────────────────────────────────────────
@@ -1047,12 +1114,59 @@ def _run_onboarding():
     context_path.write_text(content, encoding="utf-8")
     print(f"\n[spice] project/CONTEXT.md populated.")
 
+    matches = _matching_skills(detect_tags())
+    if matches:
+        print(f"\n[spice] Skills matching this stack:")
+        for skill, fm, matched in matches:
+            print(f"  skills/{skill}  (matches: {', '.join(sorted(matched))})")
+        print("        Install them with 'spice suggest'.")
+
+
+# Every tag `_detect_stack` can emit. A skill's `applies_to` must draw from this
+# vocabulary or it can never match; free words belong in `keywords` instead.
+DETECTABLE_TAGS = frozenset({
+    "csharp", "dotnet",
+    "typescript", "javascript",
+    "angular", "react", "vue", "nextjs", "nuxt", "svelte", "astro",
+    "express", "nestjs",
+    "python", "django", "fastapi", "flask",
+    "rust", "go",
+    "dart", "flutter",
+    "java", "kotlin", "maven", "gradle",
+    "php", "laravel", "symfony",
+    "ruby", "rails",
+    "swift",
+})
+
 
 def _detect_stack() -> tuple[str, str]:
-    """Detect language and stack from project files in current directory."""
+    languages, stack_tags = _detect_lists()
+    return ",".join(languages), ",".join(stack_tags)
+
+
+def detect_tags() -> set[str]:
+    languages, stack_tags = _detect_lists()
+    return {t.lower() for t in languages + stack_tags}
+
+
+def _versioned(tags: list[str], name: str, raw_version: str) -> None:
+    """Records both `angular` and `angular19`.
+
+    A skill targeting Angular in general and one targeting a specific major
+    both need something to match; emitting only the versioned form meant
+    `applies_to: [angular]` never matched anything.
+    """
+    tags.append(name)
+    major = (raw_version or "").lstrip("^~>=< ").split(".")[0]
+    if major.isdigit():
+        tags.append(f"{name}{major}")
+
+
+def _detect_lists() -> tuple[list[str], list[str]]:
+    """Detect languages and stack tags from files in the current directory."""
     cwd = Path(".")
-    languages = []
-    stack_tags = []
+    languages: list[str] = []
+    stack_tags: list[str] = []
 
     # C# / .NET
     if list(cwd.glob("*.csproj")) or list(cwd.glob("*.sln")) or list(cwd.glob("**/*.csproj")):
@@ -1066,48 +1180,44 @@ def _detect_stack() -> tuple[str, str]:
             data = json.loads(pkg_json.read_text(encoding="utf-8"))
             deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
 
-            # Detect TS vs JS
             if "typescript" in deps or (cwd / "tsconfig.json").exists():
                 languages.append("typescript")
             else:
                 languages.append("javascript")
 
-            # Detect frameworks
             if "@angular/core" in deps:
-                ver = deps.get("@angular/core", "").lstrip("^~").split(".")[0]
-                stack_tags.append(f"angular{ver}" if ver.isdigit() else "angular")
+                _versioned(stack_tags, "angular", deps["@angular/core"])
             if "react" in deps:
-                stack_tags.append("react")
+                _versioned(stack_tags, "react", deps["react"])
             if "vue" in deps:
-                stack_tags.append("vue")
+                _versioned(stack_tags, "vue", deps["vue"])
             if "next" in deps:
-                stack_tags.append("nextjs")
+                _versioned(stack_tags, "nextjs", deps["next"])
+            if "nuxt" in deps:
+                _versioned(stack_tags, "nuxt", deps["nuxt"])
+            if "svelte" in deps:
+                _versioned(stack_tags, "svelte", deps["svelte"])
+            if "astro" in deps:
+                _versioned(stack_tags, "astro", deps["astro"])
             if "express" in deps:
                 stack_tags.append("express")
             if "@nestjs/core" in deps:
                 stack_tags.append("nestjs")
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             pass
 
     # Python
-    if (cwd / "pyproject.toml").exists() or (cwd / "requirements.txt").exists() or (cwd / "setup.py").exists():
+    if any((cwd / f).exists() for f in ("pyproject.toml", "requirements.txt", "setup.py")):
         languages.append("python")
-        # Try detecting framework
         req = cwd / "requirements.txt"
         if req.exists():
             content = req.read_text(encoding="utf-8", errors="ignore").lower()
-            if "django" in content:
-                stack_tags.append("django")
-            if "fastapi" in content:
-                stack_tags.append("fastapi")
-            if "flask" in content:
-                stack_tags.append("flask")
+            for framework in ("django", "fastapi", "flask"):
+                if framework in content:
+                    stack_tags.append(framework)
 
-    # Rust
     if (cwd / "Cargo.toml").exists():
         languages.append("rust")
-
-    # Go
     if (cwd / "go.mod").exists():
         languages.append("go")
 
@@ -1116,7 +1226,7 @@ def _detect_stack() -> tuple[str, str]:
         languages.append("dart")
         stack_tags.append("flutter")
 
-    # Java
+    # JVM
     if (cwd / "pom.xml").exists():
         languages.append("java")
         stack_tags.append("maven")
@@ -1124,8 +1234,34 @@ def _detect_stack() -> tuple[str, str]:
         if "java" not in languages:
             languages.append("java")
         stack_tags.append("gradle")
+    if (cwd / "build.gradle.kts").exists() or list(cwd.glob("**/*.kt")):
+        languages.append("kotlin")
 
-    return ",".join(languages), ",".join(stack_tags)
+    # PHP
+    composer = cwd / "composer.json"
+    if composer.exists():
+        languages.append("php")
+        try:
+            deps = json.loads(composer.read_text(encoding="utf-8")).get("require", {})
+            if any(k.startswith("laravel/") for k in deps):
+                stack_tags.append("laravel")
+            if any(k.startswith("symfony/") for k in deps):
+                stack_tags.append("symfony")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Ruby
+    gemfile = cwd / "Gemfile"
+    if gemfile.exists():
+        languages.append("ruby")
+        if "rails" in gemfile.read_text(encoding="utf-8", errors="ignore").lower():
+            stack_tags.append("rails")
+
+    # Swift
+    if (cwd / "Package.swift").exists() or list(cwd.glob("*.xcodeproj")):
+        languages.append("swift")
+
+    return languages, stack_tags
 
 
 def _ask(question: str, default: str = "") -> str:

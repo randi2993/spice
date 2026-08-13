@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from installer import (
     cmd_init, cmd_add, cmd_remove, cmd_list, cmd_update, cmd_doctor,
     cmd_onboard, cmd_run_agent, cmd_providers, cmd_search, cmd_path,
-    cmd_factory_reset, cmd_profile
+    cmd_factory_reset, cmd_profile, cmd_suggest
 )
 
 MIN_PYTHON = (3, 10)
@@ -87,8 +87,13 @@ def build_parser():
                         help="Same as --available")
 
     # search
-    p_search = _cmd(sub, "search", "Search components by name or description")
+    p_search = _cmd(sub, "search", "Search components by name, description or keyword")
     p_search.add_argument("query", help="Keyword to search")
+
+    # suggest
+    p_suggest = _cmd(sub, "suggest", "Detect the stack and offer matching skills")
+    p_suggest.add_argument("--yes", "-y", action="store_true",
+                           help="Install every match without asking")
 
     # update
     p_update = _cmd(sub, "update", "Sync with latest toolkit version")
@@ -203,6 +208,7 @@ def main():
         "remove":        lambda: cmd_remove(args),
         "list":          lambda: cmd_list(args),
         "search":        lambda: cmd_search(args),
+        "suggest":       lambda: cmd_suggest(args),
         "update":        lambda: cmd_update(args),
         "doctor":        lambda: cmd_doctor(args),
         "path":          lambda: cmd_path(args),

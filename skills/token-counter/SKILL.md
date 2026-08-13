@@ -1,10 +1,11 @@
 ---
 name: token-counter
-version: 1.0.0
+version: 1.1.0
 description: Count tokens of files or text to estimate cost and manage LLM context
 shared_directive: To count tokens of a file, run `python .agent/skills/token-counter/scripts/count.py <file>`.
 category: meta
-applies_to: [tokens, context, cost-estimation]
+applies_to: []
+keywords: [tokens, context, cost-estimation]
 scripts: [scripts/count.py]
 depends_on: []
 min_toolkit_version: 1.0.0

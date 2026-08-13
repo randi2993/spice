@@ -1,10 +1,11 @@
 ---
 name: csharp-rest-api
-version: 1.0.0
+version: 1.1.0
 description: Best practices for C# .NET 8 REST APIs — Clean Architecture, JWT/cookies auth, roles, DTOs, validation, EF Core
 shared_directive: If the project includes C#/.NET endpoints, read `.agent/skills/csharp-rest-api/SKILL.md` before implementing any endpoint.
 category: stack
-applies_to: [csharp, dotnet, dotnet8, rest-api, clean-architecture, ef-core]
+applies_to: [csharp, dotnet]
+keywords: [rest-api, clean-architecture, ef-core, dotnet8, jwt, dto]
 scripts: []
 depends_on: []
 min_toolkit_version: 1.0.0
